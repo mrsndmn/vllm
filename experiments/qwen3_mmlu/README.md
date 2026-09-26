@@ -59,12 +59,31 @@ running after evaluation finishes.
 
 ## Results
 
-Pending execution.
+Completed on 2026-09-27: **81.9826% MMLU accuracy**, with **11,512 correct out
+of 14,042 questions** across all 57 subjects.
+
+| Overall | Humanities | Social sciences | STEM | Other |
+|---:|---:|---:|---:|---:|
+| 81.98% | 75.11% | 90.06% | 82.84% | 83.52% |
+
+The artifact root contains `mmlu-summary.json` and `mmlu-summary.csv`.
+The JSON summary links to the complete harness report and per-question files.
+The successful run is under `mmlu/20260927-013947/`; its console log is
+`mmlu-final.log`.
+
+Verified all saved sample counts, unique question IDs within each subject,
+finite choice scores, predicted answers, and aggregate accuracy. The full run
+finished with exit code zero and no errors or context-truncation warnings.
+Server start/status/stop/restart, chat generation, and the smoke evaluation were
+also exercised. Ruff checks and independent implementation review passed.
 
 ## Conclusions
 
-Pending evaluation.
+Local serving and full MMLU evaluation succeeded on the single GPU. The server
+was checked after evaluation and remains running in its detached tmux session.
 
 ## Changelog
 
 - 2026-09-27: Added local serving lifecycle commands and MMLU evaluation.
+- 2026-09-27: Completed and validated full MMLU; recorded results and confirmed
+  the server remains available.
