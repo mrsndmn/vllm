@@ -28,6 +28,7 @@ experiment_configs = [
         "task": "mmlu",
         "fewshot": 5,
         "offline_evaluation": True,
+        "backend": "local-single-token",
     }
 ]
 CONFIG = experiment_configs[0]
@@ -55,6 +56,8 @@ def environment():
             "HF_HOME": "/workspace-SR004.nfs2/.cache/huggingface",
             "TOKENIZERS_PARALLELISM": "false",
             "CUDA_VISIBLE_DEVICES": "0",
+            "OMP_NUM_THREADS": "1",
+            "MKL_NUM_THREADS": "1",
         }
     )
     return env
@@ -151,7 +154,7 @@ def status():
     print(json.dumps(models, indent=2))
 
 
-def evaluate(limit):
+def evaluate(limit, reference=False):
     status()
     output = ARTIFACTS / ("smoke" if limit else "mmlu") / time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
@@ -169,10 +172,9 @@ def evaluate(limit):
     )
     command = [
         CONFIG["python"],
-        "-m",
-        "lm_eval",
+        str(SCRIPT.with_name("scoring.py")),
         "--model",
-        "local-completions",
+        "local-completions" if reference else CONFIG["backend"],
         "--model_args",
         model_args,
         "--tasks",
@@ -215,6 +217,11 @@ def main():
         ],
     )
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="Use the original echoed-prompt scoring backend",
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
@@ -223,7 +230,7 @@ def main():
         stop()
         start()
     elif args.action == "eval":
-        evaluate(args.limit)
+        evaluate(args.limit, args.reference)
     else:
         globals()[args.action]()
 

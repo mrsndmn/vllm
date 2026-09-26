@@ -45,6 +45,13 @@ completions API, with plain completion prompts and answer-choice likelihoods.
 It does not apply a chat template. Full results contain all MMLU subjects,
 aggregate accuracy, per-subject accuracy, and individual samples.
 
+`scoring.py` scores each single-token answer by forcing that token and reading
+vLLM's **raw, pre-constraint log probability**. This preserves the likelihood
+metric while avoiding repeated prompt-logit computation and enabling prefix
+cache reuse. It rejects multi-token choices and overlong contexts, and checks
+raw scores against echoed-prompt scores before each run. Use `--reference` to
+run the original harness scoring path for comparisons.
+
 ```bash
 # Small end-to-end check, saved separately from full evaluations:
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py eval --limit 1
