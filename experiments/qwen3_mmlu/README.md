@@ -53,7 +53,9 @@ aggregate accuracy, per-subject accuracy, and individual samples.
 ```
 
 Dependencies: the existing vLLM environment, tmux, `lm_eval[api]==0.4.9.2`,
-and `datasets==3.6.0`. The server stays running after evaluation finishes.
+and `datasets==3.6.0`. Evaluation uses the prepared local MMLU caches without
+Hub requests. These caches must be retained for future runs. The server stays
+running after evaluation finishes.
 
 ## Results
 

@@ -26,6 +26,7 @@ experiment_configs = [
         "max_num_seqs": 16,
         "task": "mmlu",
         "fewshot": 5,
+        "offline_evaluation": True,
     }
 ]
 CONFIG = experiment_configs[0]
@@ -188,8 +189,12 @@ def evaluate(limit):
     if limit:
         command += ["--limit", str(limit)]
     (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
+    env = environment()
+    if CONFIG["offline_evaluation"]:
+        env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
+    (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
     print(f"Results: {output}", flush=True)
-    subprocess.run(command, cwd=ARTIFACTS, env=environment(), check=True)
+    subprocess.run(command, cwd=ARTIFACTS, env=env, check=True)
 
 
 def main():
