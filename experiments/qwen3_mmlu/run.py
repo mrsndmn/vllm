@@ -195,7 +195,10 @@ def evaluate(limit):
         env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
     (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
     print(f"Results: {output}", flush=True)
-    subprocess.run(command, cwd=ARTIFACTS, env=env, check=True)
+    # The harness treats a local directory named "mmlu" as a task definition.
+    workdir = ARTIFACTS / "runtime"
+    workdir.mkdir(exist_ok=True)
+    subprocess.run(command, cwd=workdir, env=env, check=True)
 
 
 def main():
