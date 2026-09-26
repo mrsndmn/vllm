@@ -35,6 +35,8 @@ class SingleTokenAPI(LocalCompletionsAPI):
 
     @staticmethod
     def parse_logprobs(outputs, tokens=None, ctxlens=None, **kwargs):
+        if isinstance(outputs, list) and len(outputs) == 1:
+            outputs = outputs[0]
         if not isinstance(outputs, dict) or len(outputs.get("choices", [])) != 1:
             raise ValueError("Expected one completion with raw log probabilities")
         choice = outputs["choices"][0]
