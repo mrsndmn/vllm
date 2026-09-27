@@ -85,7 +85,11 @@ per-layer CSVs from the sweep manifest.
 
 ## Results
 
-Implementation and validation in progress. No threshold-sweep results yet.
+Nine CPU correctness/API tests pass. Live GPU checks pass for both locations
+with zero and nonzero thresholds, including exact original completion/logprob
+parity at zero, chunked prefill, cached prefixes, concurrent requests, multiple
+prompts/choices, chat, streaming, and error handling. The implementation passed
+independent adversarial review. Full threshold-sweep results are pending.
 
 ## Conclusions
 

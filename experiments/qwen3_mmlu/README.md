@@ -9,6 +9,9 @@ MMLU evaluation through its HTTP API.
 
 `run.py:serve` launches inference; `run.py:evaluate` runs the evaluation.
 
+For the experimental activation-zeroing flag, response statistics, and separate
+MLP/block MMLU sweeps, see [ROUNDING.md](ROUNDING.md).
+
 The OpenAI-compatible API is at **http://127.0.0.1:8000/v1**, with model name
 `Qwen/Qwen3-30B-A3B-Instruct-2507`. It binds only to this machine's loopback
 interface. Forward port 8000 over SSH to access it from another machine.
