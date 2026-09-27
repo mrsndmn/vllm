@@ -8,6 +8,7 @@ import socket
 import subprocess
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 experiment_configs = [
@@ -31,6 +32,12 @@ experiment_configs = [
     }
 ]
 CONFIG = experiment_configs[0]
+BASE_CONFIG = CONFIG.copy()
+experiment_configs = [
+    dict(BASE_CONFIG, round_activations_site=site, round_activations_eps=eps)
+    for site in ("mlp", "block")
+    for eps in (0.0, 1e-4, 1e-3, 1e-2)
+]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
@@ -91,6 +98,14 @@ def serve():
         "--enable-prefix-caching",
         "--disable-log-requests",
     ]
+    if "round_activations_eps" in CONFIG:
+        database = ARTIFACTS / "rounding" / f"{uuid.uuid4().hex}.sqlite"
+        command[1:3] = [
+            str(SCRIPT.with_name("rounding_server.py")),
+            *rounding_args(),
+            "--rounding-db",
+            str(database),
+        ]
     os.chdir(ARTIFACTS)
     with (ARTIFACTS / "server.log").open("a", buffering=1) as log:
         os.dup2(log.fileno(), 1)
@@ -104,8 +119,9 @@ def start():
         print("Server session already exists; use status or restart.")
         return
     with socket.socket() as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         probe.bind(("127.0.0.1", CONFIG["port"]))
-    command = shlex.join([CONFIG["python"], str(SCRIPT), "serve"])
+    command = shlex.join([CONFIG["python"], str(SCRIPT), "serve", *rounding_args()])
     subprocess.run(
         [
             "tmux",
@@ -153,10 +169,61 @@ def status():
     print(json.dumps(models, indent=2))
 
 
+def rounding_args():
+    if "round_activations_eps" not in CONFIG:
+        return []
+    return [
+        "--round-activations-eps",
+        str(CONFIG["round_activations_eps"]),
+        "--round-activations-site",
+        CONFIG["round_activations_site"],
+    ]
+
+
+def get_json(path):
+    with urllib.request.urlopen(URL + path, timeout=120) as response:
+        return json.load(response)
+
+
+def wait_ready():
+    for _ in range(600):
+        if not session_exists():
+            raise RuntimeError("Server exited; inspect server.log")
+        try:
+            get_json("/v1/models")
+            actual = get_json("/rounding/config")
+            if (
+                actual["epsilon"] != CONFIG["round_activations_eps"]
+                or actual["site"] != CONFIG["round_activations_site"]
+            ):
+                raise RuntimeError("Rounding server configuration mismatch")
+            return
+        except (OSError, urllib.error.URLError):
+            time.sleep(1)
+    raise RuntimeError("Server not ready within startup timeout")
+
+
 def evaluate(limit):
     status()
     output = ARTIFACTS / ("smoke" if limit else "mmlu") / time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
+    actual = None
+    try:
+        actual = get_json("/rounding/config")
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    if "round_activations_eps" in CONFIG and (
+        actual is None
+        or actual["epsilon"] != CONFIG["round_activations_eps"]
+        or actual["site"] != CONFIG["round_activations_site"]
+    ):
+        raise RuntimeError("Evaluation configuration differs from running server")
+    if actual:
+        (output / "rounding-config.json").write_text(json.dumps(actual, indent=2))
+        (output / "rounding-before.json").write_text(
+            json.dumps(get_json("/rounding/stats"), indent=2)
+        )
     model_args = ",".join(
         [
             f"model={CONFIG['model']}",
@@ -201,6 +268,38 @@ def evaluate(limit):
     workdir = ARTIFACTS / "runtime"
     workdir.mkdir(exist_ok=True)
     subprocess.run(command, cwd=workdir, env=env, check=True)
+    if actual:
+        (output / "rounding-after.json").write_text(
+            json.dumps(get_json("/rounding/stats"), indent=2)
+        )
+    return output
+
+
+def sweep(limit):
+    manifest = ARTIFACTS / ("rounding-smoke.json" if limit else "rounding-sweep.json")
+    if manifest.exists():
+        raise RuntimeError(
+            f"Sweep manifest already exists: {manifest}; preserve it first"
+        )
+    results = []
+    for config in experiment_configs:
+        CONFIG.clear()
+        CONFIG.update(config)
+        stop()
+        start()
+        wait_ready()
+        output = evaluate(limit)
+        results.append(
+            {
+                "site": config["round_activations_site"],
+                "epsilon": config["round_activations_eps"],
+                "output": str(output),
+            }
+        )
+        manifest.write_text(json.dumps(results, indent=2) + "\n")
+        print(
+            f"Completed {len(results)}/{len(experiment_configs)}: {output}", flush=True
+        )
 
 
 def main():
@@ -214,18 +313,39 @@ def main():
             "status",
             "serve",
             "eval",
+            "sweep",
         ],
     )
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
+    parser.add_argument(
+        "--round-activations-eps", "--round_activations_eps", type=float
+    )
+    parser.add_argument(
+        "--round-activations-site", choices=["mlp", "block"], default="mlp"
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
+    if args.round_activations_eps is not None:
+        import math
+
+        if (
+            not math.isfinite(args.round_activations_eps)
+            or args.round_activations_eps < 0
+        ):
+            parser.error("epsilon must be finite and nonnegative")
+        CONFIG.update(
+            round_activations_eps=args.round_activations_eps,
+            round_activations_site=args.round_activations_site,
+        )
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     if args.action == "restart":
         stop()
         start()
     elif args.action == "eval":
         evaluate(args.limit)
+    elif args.action == "sweep":
+        sweep(args.limit)
     else:
         globals()[args.action]()
 
