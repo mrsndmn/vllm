@@ -3,8 +3,10 @@
 import argparse
 import concurrent.futures
 import json
+import time
 import urllib.error
 import urllib.request
+import uuid
 
 from run import ARTIFACTS, CONFIG, URL, get_json
 
@@ -13,7 +15,7 @@ REFERENCE = ARTIFACTS / "rounding-reference.json"
 
 
 def request(body, path="/v1/completions"):
-    body = dict(model=CONFIG["model"], temperature=0, max_tokens=3, **body)
+    body = {"model": CONFIG["model"], "temperature": 0, "max_tokens": 3, **body}
     req = urllib.request.Request(
         URL + path, json.dumps(body).encode(), {"Content-Type": "application/json"}
     )
@@ -46,7 +48,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["capture", "check"])
     args = parser.parse_args()
-    responses = [request({"prompt": prompt, "logprobs": 3}) for prompt in PROMPTS]
+    deadline = time.monotonic() + 600
+    while True:
+        try:
+            get_json("/v1/models")
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(1)
+    salt = uuid.uuid4().hex
+    responses = [
+        request({"prompt": prompt, "logprobs": 3, "cache_salt": salt})
+        for prompt in PROMPTS
+    ]
     if args.action == "capture":
         if REFERENCE.exists():
             raise RuntimeError("Reference already exists; preserve the original")
@@ -60,16 +75,22 @@ def main():
         original = json.loads(REFERENCE.read_text())
         assert [signature(r) for r in original] == [signature(r) for r in responses]
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(request, {"prompt": p}) for p in PROMPTS]
+        futures = [
+            executor.submit(request, {"prompt": p, "cache_salt": salt}) for p in PROMPTS
+        ]
         concurrent_responses = [future.result() for future in futures]
     for response in concurrent_responses:
         check_counts(response, config)
     assert concurrent_responses[0]["id"] != concurrent_responses[1]["id"]
-    assert (
-        concurrent_responses[0]["rounding_statistics"]["layers"][0]["tokens"]
-        < concurrent_responses[1]["rounding_statistics"]["layers"][0]["tokens"]
+    processed_and_cached = [
+        r["rounding_statistics"]["layers"][0]["tokens"]
+        + r["rounding_statistics"]["initial_cached_tokens_excluded"]
+        for r in concurrent_responses
+    ]
+    assert processed_and_cached[0] < processed_and_cached[1]
+    multiple = request(
+        {"prompt": ["One", "Two"], "n": 2, "temperature": 0.1, "seed": 0}
     )
-    multiple = request({"prompt": ["One", "Two"], "n": 2})
     check_counts(multiple, config)
     assert multiple["rounding_statistics"]["engine_sequences"] == 4
     chat = request(

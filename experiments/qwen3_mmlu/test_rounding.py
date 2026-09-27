@@ -24,6 +24,8 @@ def test_zero_epsilon_is_bitwise_noop_and_nonfinite_values_are_retained():
     counts = threshold(values, 1e-4)
     assert counts.tolist() == [[5, 1, 2, 1, 1, 0]]
     assert torch.isnan(values[0, 3]) and torch.isinf(values[0, 4])
+    threshold(values, 1e300)
+    assert torch.isnan(values[0, 3]) and torch.isinf(values[0, 4])
 
 
 def test_block_threshold_preserves_unselected_residual_operands():

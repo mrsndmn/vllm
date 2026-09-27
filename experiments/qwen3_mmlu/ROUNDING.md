@@ -71,6 +71,17 @@ configuration running. Each successful evaluation records its output directory
 in a manifest, plus active server configuration and statistics before/after.
 An existing manifest prevents accidental reruns. Evaluation uses the same
 standard likelihood-scoring harness as the original baseline. No MLS jobs run.
+Before/after benchmark counter snapshots cover all server traffic in that
+interval. Run without unrelated inference when interpreting them as MMLU
+sparsity; per-response counters remain isolated even under concurrent traffic.
+
+`validate_live.py capture` preserves original-server reference completions.
+`validate_live.py check` exercises the running instrumented server, including
+chunked prompts, cached prefixes, concurrent requests, multiple prompts/choices,
+chat, streaming, and errors. Fresh cache salts isolate epsilon-zero parity checks
+from differences in cached versus uncached execution shapes.
+`summarize_rounding.py` validates the saved samples and exports summary and
+per-layer CSVs from the sweep manifest.
 
 ## Results
 

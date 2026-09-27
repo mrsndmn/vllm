@@ -35,7 +35,13 @@ def threshold(values, eps, residual=None):
     if residual is not None:
         observed = observed + residual.float()
     zero = observed == 0
-    mask = (observed.abs() <= eps) & ~zero if eps else torch.zeros_like(zero)
+    mask = (
+        (observed.abs() <= min(eps, torch.finfo(torch.float32).max))
+        & ~zero
+        & torch.isfinite(observed)
+        if eps
+        else torch.zeros_like(zero)
+    )
     if eps:
         values.masked_fill_(mask, 0)
         if residual is not None:

@@ -127,9 +127,8 @@ class RoundingWorker(Worker):
             total, skipped = self.active_counts[rid]
             total += counts[:, i, :]
             match = re.search(r"(?:^|_)((?:chatcmpl|cmpl)-[a-f0-9]{32})(?:-|$)", rid)
-            if match is None:
-                raise RuntimeError(f"Unexpected request ID: {rid}")
-            rows.append((rid, match[1], json.dumps(total.tolist()), skipped))
+            response_id = match[1] if match else rid
+            rows.append((rid, response_id, json.dumps(total.tolist()), skipped))
         with self.stats_db:
             self.stats_db.executemany(
                 "INSERT OR REPLACE INTO requests VALUES (?, ?, ?, ?)", rows

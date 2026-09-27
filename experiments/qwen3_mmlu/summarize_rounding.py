@@ -19,7 +19,7 @@ def summarize_entry(entry):
     result = json.loads(files[0].read_text())
     questions = correct = subjects = 0
     for samples in files[0].parent.glob("samples_*.jsonl"):
-        subject = samples.name.split("_2026-")[0][len("samples_") :]
+        subject = samples.name.rsplit("_", 1)[0].removeprefix("samples_")
         ids = set()
         subject_correct = 0
         with samples.open() as stream:
