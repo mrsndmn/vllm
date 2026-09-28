@@ -58,14 +58,46 @@ from the unzeroed repeat: -0.00007). Full table: `adaptive-profile.csv`.
 
 Accuracy of every mlp cell and every block cell below 0.75 stayed within the
 baseline noise (91.4-93.8% vs 92.4-93.1%). Stage B schedules are in
-`run.py:ADAPTIVE_SCHEDULES`; block at 0.5 allocated uniform 0.5. Stage C pending.
+`run.py:ADAPTIVE_SCHEDULES`; block at 0.5 allocated uniform 0.5.
+
+Stage C (commit `3b9955b2da`): adaptive vs uniform at each budget. 5-shot is full
+MMLU (14,042 questions); z is the paired McNemar statistic (adaptive-only vs
+uniform-only correct answers). Chat is the 304-question check (in-sample for
+the adaptive arms); changes are versus chat_baseline (noise floor 9).
+
+| Budget | Arm | Mean zero | 5-shot % | Adaptive - uniform (pp) | Paired z | Chat % | Chat changed (fixed/broken) | Chat capped |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| mlp 0.6 | uniform | 0.600 | 81.89 | | | 92.11 | 15 (6/8) | 6 |
+| mlp 0.6 | adaptive | 0.626 | 81.50 | -0.39 | -2.4 | 92.11 | 12 (4/6) | 10 |
+| mlp 0.7 | uniform | 0.700 | 81.43 | | | 91.78 | 16 (5/8) | 6 |
+| mlp 0.7 | adaptive | 0.720 | 81.73 | +0.30 | +1.9 | 92.43 | 9 (4/5) | 4 |
+| mlp 0.8 | uniform | 0.800 | 80.88 | | | 91.12 | 15 (4/9) | 4 |
+| mlp 0.8 | adaptive | 0.807 | 80.79 | -0.09 | -0.5 | 92.11 | 15 (5/7) | 5 |
+| block 0.3 | uniform | 0.300 | 80.47 | | | 90.46 | 20 (5/12) | 12 |
+| block 0.3 | adaptive | 0.313 | 80.44 | -0.03 | -0.1 | 91.45 | 18 (6/10) | 10 |
+| block 0.4 | uniform | 0.400 | 77.50 | | | 90.13 | 22 (5/13) | 14 |
+| block 0.4 | adaptive | 0.406 | 76.40 | -1.10 | -4.4 | 89.14 | 27 (7/18) | 17 |
+| block 0.5 | uniform = adaptive | 0.500 | 70.33 | 0 | | 83.88 | 42 (5/32) | 20 |
+
+Local baseline: 81.98% (5-shot); chat_baseline 92.76%.
 
 ## Conclusions
 
-Pending.
+Allocation from one-group-at-a-time generative profiling did not reliably beat
+uniform zeroing. On full 5-shot MMLU it helped only at mlp 0.7 (+0.30 pp,
+borderline, while zeroing slightly more), tied at mlp 0.8 and block 0.3, and was
+worse at mlp 0.6 (-0.39 pp) and clearly worse at block 0.4 (-1.10 pp; also -1 pp
+in chat). Groups that each tolerated block 0.5 alone did not tolerate it
+together: single-group costs are not additive. In chat, adaptive mlp arms stayed
+at or near the noise floor up to 0.8, but that check is in-sample.
+
+Next: allocate with interactions (e.g. greedy steps that evaluate the full
+schedule), finer levels (e.g. block 0.35-0.45 on the tolerant first/last
+groups), or the validation-split likelihood proxy instead of the chat subset.
 
 ## Changelog
 
 - 2026-09-28: Planned; per-group schedules, profiling rows, re-scoring, and the
   allocation search implemented.
 - 2026-09-28: Stage A done; schedules registered and Stage C launched.
+- 2026-09-28: Stage C done; adaptive vs uniform recorded.
