@@ -81,7 +81,9 @@ without an answer line gets `Answer:` the same way. The letter is parsed from
 the last `Answer:` line or from the forced continuation; unparsed answers count
 as wrong. Qwen3-30B-A3B-Instruct-2507 has no thinking mode (its chat template
 has none); `enable_thinking=False` is passed anyway. `chat_baseline` serves the
-wrapper with nothing zeroed so the four quantile arms share its protocol.
+wrapper with nothing zeroed so the four quantile arms share its protocol;
+`chat_baseline_repeat` repeats it to measure answer changes from batching
+nondeterminism alone. Requests retry up to 3 times.
 
 ```bash
 $M experiments/qwen3_mmlu/run_jobs.py --filter 'chat_*' --dry

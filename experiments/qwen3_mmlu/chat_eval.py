@@ -14,6 +14,8 @@ import json
 import random
 import re
 import statistics
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -26,13 +28,18 @@ PROMPT = (
 )
 INTERRUPTED = "\n\n[reasoning interrupted] Answer:"
 MISSING = "\n\nAnswer:"
-FINAL = re.compile(r"(?i:answer)\s*[:：]\s*[*_(\[\s]*([ABCD])\b")
-FORCED = re.compile(r"^[\s*_(\[]*([ABCD])\b")
+# Letter possibly wrapped in markdown, quotes, parentheses, $...$ or \boxed{...}.
+LETTER = r"(?:\\boxed\{|\\text\{|[\s*_`'\"$(\[])*([ABCD])(?![A-Za-z])"
+FINAL = re.compile(r"(?i:answer)\s*[:：]" + LETTER)
+FORCED = re.compile(LETTER)
 
 
 def final_answer(text):
-    """Letter from the last "Answer: X" line of a finished response."""
-    matches = FINAL.findall(text)
+    """Letter from the last line containing "Answer:", if it names one."""
+    lines = [
+        line for line in text.splitlines() if re.search(r"(?i)answer\s*[:：]", line)
+    ]
+    matches = FINAL.findall(lines[-1]) if lines else []
     return matches[-1] if matches else None
 
 
@@ -116,15 +123,21 @@ def answer(question, prompt, post, config):
     return record
 
 
-def poster(url):
+def poster(url, attempts=3):
     def post(body):
         request = urllib.request.Request(
             url + "/v1/completions",
             json.dumps(body).encode(),
             {"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=1800) as response:
-            return json.load(response)
+        for attempt in range(attempts):
+            try:
+                with urllib.request.urlopen(request, timeout=1800) as response:
+                    return json.load(response)
+            except (urllib.error.URLError, ConnectionError, TimeoutError):
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(10 * (attempt + 1))
 
     return post
 

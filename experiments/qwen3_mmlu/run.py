@@ -100,17 +100,19 @@ CHAT_CONFIG = dict(
 experiment_configs += [
     dict(
         CHAT_CONFIG,
-        name="chat_baseline" if quantile == 0 else f"chat_{site}_q{quantile:g}",
+        name=name or f"chat_{site}_q{quantile:g}",
         round_activations_site=site,
         round_activations_eps=0.0,
         round_activations_quantile=quantile,
     )
-    for site, quantile in (
-        ("mlp", 0.0),
-        ("mlp", 0.25),
-        ("mlp", 0.5),
-        ("block", 0.25),
-        ("block", 0.5),
+    # The repeat measures answer changes from batching nondeterminism alone.
+    for name, site, quantile in (
+        ("chat_baseline", "mlp", 0.0),
+        ("chat_baseline_repeat", "mlp", 0.0),
+        (None, "mlp", 0.25),
+        (None, "mlp", 0.5),
+        (None, "block", 0.25),
+        (None, "block", 0.5),
     )
 ]
 ARTIFACTS = Path(CONFIG["artifacts"])

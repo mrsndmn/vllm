@@ -424,6 +424,12 @@ def test_summary_reports_total_zero_share_and_rejects_empty_manifest(
         ("Answer: A is tempting.\nFinal answer: D", "D"),
         ("answer: a simple case, so Answer: C.", "C"),
         ("The answer depends on B.", None),
+        ("The answer: A is wrong.\nAnswer: $C$", "C"),
+        ("Answer: \\boxed{D}", "D"),
+        ("Answer: `B`", "B"),
+        ("Answer: 'A'", "A"),
+        ("Answer: _B_", "B"),
+        ("Answer: B.\nThe answer: I am not sure", None),
     ],
 )
 def test_final_answer_takes_last_answer_line(text, letter):
@@ -431,7 +437,16 @@ def test_final_answer_takes_last_answer_line(text, letter):
 
 
 @pytest.mark.parametrize(
-    ("text", "letter"), [(" B", "B"), (" **C**", "C"), (" (A)", "A"), (" The", None)]
+    ("text", "letter"),
+    [
+        (" B", "B"),
+        (" **C**", "C"),
+        (" (A)", "A"),
+        (" $B$", "B"),
+        (" \\boxed{C}", "C"),
+        (" The", None),
+        (" Both", None),
+    ],
 )
 def test_forced_answer_reads_leading_letter(text, letter):
     assert chat_eval.forced_answer(text) == letter
@@ -526,6 +541,7 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
     chat = [c for c in run.experiment_configs if c.get("task") == "mmlu_stem_chat"]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
+        "chat_baseline_repeat",
         "chat_mlp_q0.25",
         "chat_mlp_q0.5",
         "chat_block_q0.25",
@@ -535,6 +551,9 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
         assert len(config["chat_subjects"]) * config["chat_per_subject"] == 304
         assert config["launcher"] == "mls" and config["max_num_seqs"] == 16
     assert chat[0]["round_activations_quantile"] == 0
+    assert {k: v for k, v in chat[1].items() if k != "name"} == {
+        k: v for k, v in chat[0].items() if k != "name"
+    }
     monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
     monkeypatch.setattr(run_jobs, "MANIFEST", tmp_path / "manifest.json")
     for name in ("mlp_q0.5", "chat_mlp_q0.5"):
@@ -617,3 +636,35 @@ def test_chat_summary_validates_runs_and_counts_changes(tmp_path, monkeypatch):
     write_chat_run(tmp_path, "chat_mlp_q0.5", ["A"])
     with pytest.raises(AssertionError):
         chat_eval.summarize()
+
+
+def test_poster_retries_transient_failures(monkeypatch):
+    calls = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return b'{"ok": 1}'
+
+    def urlopen(request, timeout):
+        calls.append(timeout)
+        if len(calls) < 3:
+            raise chat_eval.urllib.error.URLError("reset")
+        return Response()
+
+    monkeypatch.setattr(chat_eval.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(chat_eval.time, "sleep", lambda seconds: None)
+    assert chat_eval.poster("http://x")({"a": 1}) == {"ok": 1} and len(calls) == 3
+    calls.clear()
+    monkeypatch.setattr(
+        chat_eval.urllib.request,
+        "urlopen",
+        lambda request, timeout: (_ for _ in ()).throw(ConnectionError()),
+    )
+    with pytest.raises(ConnectionError):
+        chat_eval.poster("http://x")({"a": 1})
