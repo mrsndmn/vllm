@@ -197,6 +197,24 @@ Summaries are `rounding-quantile-sweep-summary.csv` and
 `rounding-quantile-sweep-layers.csv` in the artifact root. No MLSpace baseline
 job was run; comparisons use the local baseline.
 
+Generative chat check (MLSpace, commit `85b77482af`, 304 seeded STEM test
+questions, greedy, 1024-token reasoning cap). "Changed" counts answers differing
+from `chat_baseline`; `chat_baseline_repeat` gives the noise floor from batching
+nondeterminism. The last column scores the same 304 questions with the 5-shot
+letter-likelihood harness runs above.
+
+| Arm | Accuracy % | Natural / forced after cap | Mean reasoning tokens | Changed (fixed/broken) | Total zero % | Same questions, 5-shot likelihood % |
+|---|---:|---:|---:|---:|---:|---:|
+| chat_baseline | 92.76 | 297 / 7 | 206 | — | 0 | 83.55 |
+| chat_baseline_repeat | 93.09 | 299 / 5 | 199 | 9 (4/3) | 0 | — |
+| chat_mlp_q0.25 | 92.11 | 298 / 6 | 208 | 10 (3/5) | 25.04–25.06 | 84.21 |
+| chat_mlp_q0.5 | 92.76 | 299 / 5 | 201 | 14 (6/6) | 50.07–50.10 | 84.21 |
+| chat_block_q0.25 | 91.78 | 297 / 7 | 208 | 17 (6/9) | 25.01–25.04 | 84.87 |
+| chat_block_q0.5 | 83.88 | 284 / 20 | 288 | 42 (5/32) | 50.01–50.03 | 66.45 |
+
+No answer was unparsed and no finished response lacked an answer line.
+Summary: `rounding-chat-sweep-summary.csv` in the artifact root.
+
 ## Conclusions
 
 Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
@@ -210,6 +228,12 @@ layers, -0.38 pp). The residual stream tolerates 25% (-0.51 pp) but loses 11.7
 pp at 50%, although that is far less than epsilon 1e-1's collapse to chance.
 Next steps: probe mlp above 50% (e.g. 0.7, 0.8) and block between 0.25 and 0.5,
 and consider an MLSpace baseline job if job-to-local drift matters.
+
+In the generative chat setting, mlp zeroing up to 50% and block zeroing at 25%
+stay within the batching noise floor (9 changed answers between two identical
+baseline runs; accuracy within 1 pp). Block at 50% is unsafe for the chat
+model: -8.9 pp, 32 answers broken vs 5 fixed, 40% longer reasoning and nearly
+3x as many responses hitting the reasoning cap.
 
 ## Changelog
 
@@ -230,3 +254,10 @@ and consider an MLSpace baseline job if job-to-local drift matters.
   lm-mpi-job-8954aff6-caa6-4b87-8622-573832c2fb1f, block_q0.25
   lm-mpi-job-fa24bc7d-3388-46da-8969-5502420eb632, block_q0.5
   lm-mpi-job-e8dc6836-ab28-417c-a91f-3a5a951b6974; recorded results.
+- 2026-09-28: Generative chat check completed (chat_baseline
+  lm-mpi-job-162b1bf3-ea6e-465f-86dd-c553df5824aa, chat_baseline_repeat
+  lm-mpi-job-151cd78d-5e62-4648-ba17-27e5e9556dbe, chat_mlp_q0.25
+  lm-mpi-job-ff0a7928-70fc-4158-b9fa-a945280b0c03, chat_mlp_q0.5
+  lm-mpi-job-0db04fd8-1316-4dfa-9f90-f5b916a890e0, chat_block_q0.25
+  lm-mpi-job-bb10a42c-8804-4600-a2bd-d329ba69d723, chat_block_q0.5
+  lm-mpi-job-b99d1149-fbd5-45ae-a317-89b2c99e655e); recorded results.
