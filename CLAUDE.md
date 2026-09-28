@@ -37,8 +37,18 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   Rows with `task="mmlu_stem_chat"` run `chat_eval.py run` instead of the harness:
   chat template, 304 seeded STEM questions, greedy reasoning capped at 1024 tokens,
   then a forced `[reasoning interrupted] Answer:` letter if needed.
-- `experiments/qwen3_mmlu/chat_eval.py summarize`: validate finished chat jobs and
-  write `rounding-chat-sweep-summary.csv` with answer changes vs `chat_baseline`.
+- `experiments/qwen3_mmlu/chat_eval.py summarize [--filter GLOB]`: validate
+  finished chat jobs and write `rounding-chat-sweep-summary.csv` with answer
+  changes vs `chat_baseline`.
+- `experiments/qwen3_mmlu/run.py restart --round-activations-quantiles
+  0,0,0.75,0,0,0,0,0 --round-activations-site block`: one quantile per equal
+  consecutive layer group (8 groups of 6); exclusive with eps and quantile.
+- Adaptive zeroing (`ADAPTIVE.md`): `prof_*` rows (launch with
+  `run_jobs.py --filter 'prof_*'`) zero one group at a time on chat_baseline's
+  questions and re-score its responses; `experiments/qwen3_mmlu/sensitivity.py`
+  writes `adaptive-profile.csv`/`adaptive-schedules.json` and prints schedules to
+  paste into `run.py` `ADAPTIVE_SCHEDULES`, which generates `adapt_*` (harness)
+  and `chat_adapt_*` rows.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous

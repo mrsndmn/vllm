@@ -2,12 +2,13 @@
 
 import argparse
 import importlib.metadata
+import json
 import os
 import runpy
 import sys
 from pathlib import Path
 
-from rounding_stats import connect, validate_eps, validate_quantile
+from rounding_stats import connect, validate_eps, validate_quantile, validate_schedule
 
 
 def main():
@@ -25,12 +26,23 @@ def main():
         type=validate_quantile,
     )
     parser.add_argument(
+        "--round-activations-quantiles",
+        "--round_activations_quantiles",
+        type=lambda text: validate_schedule(text.split(",")),
+        help="Comma-separated quantile per equal consecutive layer group",
+    )
+    parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], required=True
     )
     parser.add_argument("--rounding-db", type=Path, required=True)
     args, server_args = parser.parse_known_args()
-    if args.round_activations_eps and args.round_activations_quantile:
-        parser.error("use either an epsilon or a quantile, not both")
+    modes = (
+        args.round_activations_eps,
+        args.round_activations_quantile,
+        args.round_activations_quantiles,
+    )
+    if sum(map(bool, modes)) > 1:
+        parser.error("use one of epsilon, quantile, or quantile schedule")
     if importlib.metadata.version("vllm") != "0.14.1":
         raise RuntimeError("This experimental wrapper requires installed vLLM 0.14.1")
     if args.rounding_db.exists():
@@ -41,6 +53,9 @@ def main():
         {
             "ROUND_ACTIVATIONS_EPS": str(args.round_activations_eps),
             "ROUND_ACTIVATIONS_QUANTILE": str(args.round_activations_quantile),
+            "ROUND_ACTIVATIONS_QUANTILES": json.dumps(args.round_activations_quantiles)
+            if args.round_activations_quantiles
+            else "",
             "ROUND_ACTIVATIONS_SITE": args.round_activations_site,
             "ROUND_ACTIVATIONS_DB": str(args.rounding_db.resolve()),
             "VLLM_ENABLE_FUSED_MOE_ACTIVATION_CHUNKING": "0",

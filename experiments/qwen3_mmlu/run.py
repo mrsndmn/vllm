@@ -57,8 +57,12 @@ experiment_configs += [
         round_activations_eps=0.0,
         round_activations_quantile=quantile,
     )
-    for site in ("mlp", "block")
-    for quantile in (0.25, 0.5)
+    # 0.6-0.8 (mlp) and 0.3-0.4 (block) are uniform controls for adaptive budgets.
+    for site, quantiles in (
+        ("mlp", (0.25, 0.5, 0.6, 0.7, 0.8)),
+        ("block", (0.25, 0.3, 0.4, 0.5)),
+    )
+    for quantile in quantiles
 ]
 # Generative chat-format check on a seeded MMLU STEM subset (chat_eval.py).
 STEM_SUBJECTS = [
@@ -113,8 +117,69 @@ experiment_configs += [
         (None, "mlp", 0.5),
         (None, "block", 0.25),
         (None, "block", 0.5),
+        (None, "mlp", 0.6),
+        (None, "mlp", 0.7),
+        (None, "mlp", 0.8),
+        (None, "block", 0.3),
+        (None, "block", 0.4),
     )
 ]
+# Adaptive zeroing: one quantile per group of 6 consecutive layers (8 groups).
+# Stage A profiles one group at a time on the chat_baseline questions; each job
+# also re-scores chat_baseline's responses (sensitivity.py turns this into a
+# per-group cost and allocates budgets).
+GROUPS = 8
+PROFILE_LEVELS = {"mlp": (0.5, 0.75, 0.9), "block": (0.25, 0.5, 0.75)}
+# Stage B targets: mean zero share over the 8 groups (layers are equal-sized).
+ADAPTIVE_BUDGETS = {"mlp": (0.6, 0.7, 0.8), "block": (0.3, 0.4, 0.5)}
+PROFILE_CONFIG = dict(
+    CHAT_CONFIG,
+    chat_reference="chat_baseline",
+    round_activations_eps=0.0,
+    round_activations_quantile=0.0,
+)
+experiment_configs += [
+    dict(
+        PROFILE_CONFIG,
+        name=name,
+        round_activations_site="mlp",
+        round_activations_quantiles=[0.0] * GROUPS,
+    )
+    for name in ("prof_baseline", "prof_baseline_repeat")
+] + [
+    dict(
+        PROFILE_CONFIG,
+        name=f"prof_{site}_g{group}_q{quantile:g}",
+        round_activations_site=site,
+        round_activations_quantiles=[
+            quantile if index == group else 0.0 for index in range(GROUPS)
+        ],
+    )
+    for site, levels in PROFILE_LEVELS.items()
+    for group in range(GROUPS)
+    for quantile in levels
+]
+# Stage C: schedules chosen by sensitivity.py from Stage A (filled after Stage A),
+# keyed by (site, budget = mean zero share); each gets a harness and a chat row.
+ADAPTIVE_SCHEDULES = {}
+for (site, budget), schedule in ADAPTIVE_SCHEDULES.items():
+    adaptive = dict(
+        round_activations_site=site,
+        round_activations_eps=0.0,
+        round_activations_quantile=0.0,
+        round_activations_quantiles=list(schedule),
+    )
+    experiment_configs += [
+        dict(
+            BASE_CONFIG,
+            adaptive,
+            name=f"adapt_{site}_b{budget:g}",
+            launcher="mls",
+            instance_type="a100.1gpu",
+            python=JOB_PYTHON,
+        ),
+        dict(CHAT_CONFIG, adaptive, name=f"chat_adapt_{site}_b{budget:g}"),
+    ]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
@@ -266,6 +331,11 @@ def rounding_args():
             "--round-activations-quantile",
             str(CONFIG["round_activations_quantile"]),
         ]
+    if "round_activations_quantiles" in CONFIG:
+        args += [
+            "--round-activations-quantiles",
+            ",".join(map(str, CONFIG["round_activations_quantiles"])),
+        ]
     return args
 
 
@@ -274,6 +344,7 @@ def config_mismatch(actual):
         actual["epsilon"] != CONFIG["round_activations_eps"]
         or actual["site"] != CONFIG["round_activations_site"]
         or actual.get("quantile", 0.0) != CONFIG.get("round_activations_quantile", 0.0)
+        or actual.get("quantiles") != CONFIG.get("round_activations_quantiles")
     )
 
 
@@ -497,6 +568,7 @@ def job(name, limit):
         "site": CONFIG["round_activations_site"],
         "epsilon": CONFIG["round_activations_eps"],
         "quantile": CONFIG["round_activations_quantile"],
+        "quantiles": CONFIG.get("round_activations_quantiles"),
         "output": str(output),
     } | ({"limit": limit} if limit else {})
     (root / "done.json").write_text(json.dumps(marker, indent=2) + "\n")
@@ -526,6 +598,11 @@ def main():
         "--round-activations-quantile", "--round_activations_quantile", type=float
     )
     parser.add_argument(
+        "--round-activations-quantiles",
+        "--round_activations_quantiles",
+        help="Comma-separated quantile per equal consecutive layer group",
+    )
+    parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], default="mlp"
     )
     parser.add_argument("--name", help="Registry experiment name for job or eval")
@@ -538,25 +615,35 @@ def main():
     if args.detach and args.action != "sweep":
         parser.error("--detach only applies to sweep")
     eps, quantile = args.round_activations_eps, args.round_activations_quantile
+    schedule = args.round_activations_quantiles
+    if schedule is not None:
+        try:
+            schedule = [float(value) for value in schedule.split(",")]
+        except ValueError:
+            parser.error("quantile schedule must be comma-separated numbers")
+    zeroing = (eps, quantile, schedule)
     if args.action == "job" and args.name is None:
         parser.error("--name is required for job")
     if args.name is not None and args.action not in ("job", "eval"):
         parser.error("--name only applies to job and eval")
-    if args.name is not None and (eps is not None or quantile is not None):
+    if args.name is not None and any(value is not None for value in zeroing):
         parser.error("--name takes its zeroing settings from the registry")
     if eps is not None and (not math.isfinite(eps) or eps < 0):
         parser.error("epsilon must be finite and nonnegative")
-    if quantile is not None and not (math.isfinite(quantile) and 0 <= quantile < 1):
-        parser.error("quantile must be in [0, 1)")
-    if eps and quantile:
-        parser.error("use either an epsilon or a quantile, not both")
-    if eps is not None or quantile is not None:
+    for value in [quantile, *(schedule or [])]:
+        if value is not None and not (math.isfinite(value) and 0 <= value < 1):
+            parser.error("quantiles must be in [0, 1)")
+    if sum(map(bool, zeroing)) > 1:
+        parser.error("use one of epsilon, quantile, or quantile schedule")
+    if any(value is not None for value in zeroing):
         CONFIG.update(
             round_activations_eps=eps or 0.0,
             round_activations_site=args.round_activations_site,
         )
         if quantile is not None:
             CONFIG["round_activations_quantile"] = quantile
+        if schedule is not None:
+            CONFIG["round_activations_quantiles"] = schedule
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     if args.action == "restart":
         stop()

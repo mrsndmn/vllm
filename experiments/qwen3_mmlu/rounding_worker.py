@@ -10,9 +10,11 @@ import torch
 from rounding_stats import (
     FIELDS,
     connect,
+    group_quantile,
     threshold,
     validate_eps,
     validate_quantile,
+    validate_schedule,
 )
 
 from vllm.v1.worker.gpu_worker import Worker
@@ -43,8 +45,10 @@ class RoundingWorker(Worker):
         self.quantile = validate_quantile(
             os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0")
         )
-        if self.eps and self.quantile:
-            raise ValueError("Use either an epsilon or a quantile, not both")
+        schedule = os.environ.get("ROUND_ACTIVATIONS_QUANTILES")
+        self.schedule = validate_schedule(json.loads(schedule)) if schedule else None
+        if sum(map(bool, (self.eps, self.quantile, self.schedule))) > 1:
+            raise ValueError("Use one of epsilon, quantile, or quantile schedule")
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
         self.active_counts = {}
@@ -53,6 +57,8 @@ class RoundingWorker(Worker):
         self.layer_counts = {}
         self.executing = False
         self.layers = len(model.model.layers)
+        if self.schedule:
+            group_quantile(self.schedule, 0, self.layers)
         for index, layer in enumerate(model.model.layers):
             experts = layer.mlp.experts.quant_method.kernel.fused_experts
             if type(experts) is not TritonExperts:
@@ -115,7 +121,10 @@ class RoundingWorker(Worker):
         runner.execute_model = execute_model
 
     def record(self, layer, values, residual=None):
-        counts = threshold(values, self.eps, residual, self.quantile)
+        quantile = self.quantile
+        if self.schedule:
+            quantile = group_quantile(self.schedule, layer, self.layers)
+        counts = threshold(values, self.eps, residual, quantile)
         if self.executing:
             expected = sum(self.batch_sizes)
             if counts.shape[0] != expected or layer in self.layer_counts:

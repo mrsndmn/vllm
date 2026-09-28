@@ -15,10 +15,18 @@ class RoundingMiddleware:
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
         self.eps = float(os.environ["ROUND_ACTIVATIONS_EPS"])
         self.quantile = float(os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0"))
+        schedule = os.environ.get("ROUND_ACTIVATIONS_QUANTILES")
+        self.quantiles = json.loads(schedule) if schedule else None
 
     async def stats(self, response_id=None):
         return await asyncio.to_thread(
-            read_stats, self.path, self.site, self.eps, response_id, self.quantile
+            read_stats,
+            self.path,
+            self.site,
+            self.eps,
+            response_id,
+            self.quantile,
+            self.quantiles,
         )
 
     async def __call__(self, scope, receive, send):
@@ -33,6 +41,7 @@ class RoundingMiddleware:
                     "site": self.site,
                     "epsilon": self.eps,
                     "quantile": self.quantile,
+                    "quantiles": self.quantiles,
                     "database": self.path,
                 }
             body = json.dumps(result).encode()

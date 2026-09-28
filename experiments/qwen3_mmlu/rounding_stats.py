@@ -30,6 +30,20 @@ def validate_quantile(value):
     return value
 
 
+def validate_schedule(values):
+    """Per-group quantiles; groups split the layers into equal consecutive runs."""
+    values = [validate_quantile(value) for value in values]
+    if not values:
+        raise ValueError("round_activations_quantiles must not be empty")
+    return values
+
+
+def group_quantile(schedule, layer, layers):
+    if layers % len(schedule):
+        raise ValueError("Quantile groups must divide the layer count evenly")
+    return schedule[layer * len(schedule) // layers]
+
+
 def threshold(values, eps, residual=None, quantile=0.0):
     """Modify selected values in place; return per-token int64 counters.
 
@@ -101,7 +115,7 @@ def format_layers(counts):
     return layers
 
 
-def read_stats(path, site, eps, response_id=None, quantile=0.0):
+def read_stats(path, site, eps, response_id=None, quantile=0.0, quantiles=None):
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30) as db:
         sql = "SELECT counts, skipped FROM requests"
         params = ()
@@ -123,6 +137,7 @@ def read_stats(path, site, eps, response_id=None, quantile=0.0):
         "site": site,
         "epsilon": eps,
         "quantile": quantile,
+        "quantiles": quantiles,
         "coverage": "executed token positions; cached prefixes excluded; "
         "recomputed positions counted again; last sampled token is not forwarded",
         "engine_sequences": requests,

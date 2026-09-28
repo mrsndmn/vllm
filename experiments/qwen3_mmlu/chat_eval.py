@@ -75,6 +75,48 @@ def select_questions(config, per_subject, load=load_test_split):
     return picked
 
 
+def reference_records(name, limit=None):
+    """Samples of a finished chat run; limit keeps the first N per subject."""
+    import run
+
+    marker = run.job_root(name, None) / "done.json"
+    output = Path(json.loads(marker.read_text())["output"])
+    records, kept = [], {}
+    for record in map(json.loads, (output / "samples.jsonl").open()):
+        kept[record["subject"]] = kept.get(record["subject"], 0) + 1
+        if not limit or kept[record["subject"]] <= limit:
+            records.append(record)
+    return records
+
+
+def reference_response(record):
+    """The assistant text a user saw: reasoning plus any forced answer."""
+    return (
+        record["reasoning"]
+        + record.get("forced_suffix", "")
+        + record.get("forced_text", "")
+    )
+
+
+def score_reference(prompt_ids, response_ids, post, config):
+    """Log-likelihood of a fixed response under the served (zeroed) model."""
+    result = post(
+        {
+            "model": config["model"],
+            "prompt": prompt_ids + response_ids,
+            "max_tokens": 1,
+            "temperature": 0,
+            "echo": True,
+            "logprobs": 1,
+        }
+    )
+    logprobs = result["choices"][0]["logprobs"]["token_logprobs"]
+    scored = logprobs[len(prompt_ids) : len(prompt_ids) + len(response_ids)]
+    if len(scored) != len(response_ids) or None in scored:
+        raise RuntimeError("Missing prompt log-probabilities for reference response")
+    return {"reference_tokens": len(response_ids), "reference_logprob": sum(scored)}
+
+
 def chat_prompt(tokenizer, question):
     content = PROMPT.format(
         question=question["question"], **dict(zip("ABCD", question["choices"]))
@@ -146,6 +188,18 @@ def summarize_records(records, config):
     tokens = [r["reasoning_tokens"] for r in records]
     subjects = sorted({r["subject"] for r in records})
     modes = ("natural", "forced_cap", "forced_missing")
+    reference = {}
+    if records and "reference_tokens" in records[0]:
+        total = sum(r["reference_tokens"] for r in records)
+        logprob = sum(r["reference_logprob"] for r in records)
+        reference = {
+            "reference": {
+                "name": config.get("chat_reference"),
+                "tokens": total,
+                "logprob": logprob,
+                "nll_per_token": -logprob / total,
+            }
+        }
     return {
         "task": TASK,
         "questions": len(records),
@@ -166,21 +220,42 @@ def summarize_records(records, config):
         "interrupted_suffix": INTERRUPTED,
         "missing_suffix": MISSING,
         **{key: config[key] for key in config if key.startswith("chat_")},
+        **reference,
     }
 
 
-def run_eval(config, output, url, limit=None, load=load_test_split, post=None):
-    from transformers import AutoTokenizer
+def run_eval(
+    config, output, url, limit=None, load=load_test_split, post=None, tokenizer=None
+):
+    if tokenizer is None:
+        from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(config["snapshot"])
-    questions = select_questions(config, limit or config["chat_per_subject"], load)
+        tokenizer = AutoTokenizer.from_pretrained(config["snapshot"])
+    reference = config.get("chat_reference")
+    if reference:  # Same questions as the reference run, in its order.
+        references = reference_records(reference, limit)
+        fields = ("subject", "index", "question", "choices", "answer")
+        questions = [{key: r[key] for key in fields} for r in references]
+    else:
+        questions = select_questions(config, limit or config["chat_per_subject"], load)
     post = post or poster(url)
+    prompts = [chat_prompt(tokenizer, question) for question in questions]
     with concurrent.futures.ThreadPoolExecutor(config["chat_concurrency"]) as pool:
         records = list(
-            pool.map(
-                lambda q: answer(q, chat_prompt(tokenizer, q), post, config), questions
-            )
+            pool.map(lambda q, p: answer(q, p, post, config), questions, prompts)
         )
+        if reference:
+            # Tokenize in this thread; fast tokenizers are not safe to share.
+            pairs = [
+                (
+                    tokenizer.encode(r["prompt"], add_special_tokens=False),
+                    tokenizer.encode(reference_response(r), add_special_tokens=False),
+                )
+                for r in references
+            ]
+            scores = pool.map(lambda pair: score_reference(*pair, post, config), pairs)
+            for record, score in zip(records, scores):
+                record.update(score)
     with (output / "samples.jsonl").open("w") as stream:
         for record in records:
             stream.write(json.dumps(record) + "\n")
@@ -207,14 +282,19 @@ def layer_zero_shares(output):
     return shares
 
 
-def summarize(baseline="chat_baseline"):
-    """Validate finished chat runs and write summary CSV/JSON with answer changes."""
+def finished_runs(pattern="*"):
+    """(config, output, records by question) of finished chat runs matching a glob."""
+    import fnmatch
+
     import run
 
     runs = {}
     for config in run.experiment_configs:
-        marker = run.job_root(config.get("name", ""), None) / "done.json"
-        if config.get("task") != TASK or not marker.exists():
+        name = config.get("name", "")
+        marker = run.job_root(name, None) / "done.json"
+        if config.get("task") != TASK or not fnmatch.fnmatchcase(name, pattern):
+            continue
+        if not marker.exists():
             continue
         output = Path(json.loads(marker.read_text())["output"])
         records = [json.loads(line) for line in (output / "samples.jsonl").open()]
@@ -227,6 +307,16 @@ def summarize(baseline="chat_baseline"):
             output,
             {(r["subject"], r["index"]): r for r in records},
         )
+    return runs
+
+
+def summarize(pattern="*", baseline="chat_baseline"):
+    """Validate finished chat runs and write summary CSV/JSON with answer changes."""
+    import run
+
+    runs = finished_runs(pattern)
+    if baseline not in runs:
+        runs = {**finished_runs(baseline), **runs}
     reference = runs.get(baseline, (None, None, None))[2]
     rows = []
     for name, (config, output, records) in runs.items():
@@ -245,6 +335,10 @@ def summarize(baseline="chat_baseline"):
             "min_layer_total_zero_percent": min(shares),
             "max_layer_total_zero_percent": max(shares),
         }
+        if config.get("round_activations_quantiles"):
+            row["quantiles"] = ",".join(map(str, config["round_activations_quantiles"]))
+        if "reference" in result:
+            row["reference_nll_per_token"] = result["reference"]["nll_per_token"]
         if reference and name != baseline:
             row["changed_vs_baseline"] = sum(
                 records[k]["prediction"] != reference[k]["prediction"] for k in records
@@ -276,9 +370,10 @@ def main():
     parser.add_argument("--output", type=Path)
     parser.add_argument("--url")
     parser.add_argument("--limit", type=int, help="Questions per subject")
+    parser.add_argument("--filter", default="*", help="Run-name glob for summarize")
     args = parser.parse_args()
     if args.action == "summarize":
-        summarize()
+        summarize(args.filter)
     else:
         config = json.loads(args.config.read_text())
         run_eval(config, args.output, args.url, args.limit)

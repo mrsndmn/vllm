@@ -55,6 +55,7 @@ def summarize_entry(entry):
         "site": entry["site"],
         "epsilon": entry["epsilon"],
         "quantile": entry.get("quantile", 0.0),
+        "quantiles": ",".join(map(str, entry.get("quantiles") or [])),
         "mmlu_percent": 100 * accuracy,
         "correct": correct,
         "questions": questions,

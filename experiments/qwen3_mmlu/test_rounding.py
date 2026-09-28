@@ -1,20 +1,25 @@
 """Behavior checks for threshold boundaries and isolated API statistics."""
 
 import asyncio
+import itertools
 import json
 import subprocess
+import sys
 
 import chat_eval
 import pytest
 import run_jobs
+import sensitivity
 import torch
 from rounding_api import RoundingMiddleware
 from rounding_stats import (
     connect,
+    group_quantile,
     read_stats,
     threshold,
     validate_eps,
     validate_quantile,
+    validate_schedule,
 )
 
 import run
@@ -265,7 +270,12 @@ def test_registry_keeps_fixed_eps_rows_and_adds_named_quantile_jobs():
     assert [c["name"] for c in jobs] == [
         "mlp_q0.25",
         "mlp_q0.5",
+        "mlp_q0.6",
+        "mlp_q0.7",
+        "mlp_q0.8",
         "block_q0.25",
+        "block_q0.3",
+        "block_q0.4",
         "block_q0.5",
     ]
     for config in jobs:
@@ -359,8 +369,9 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
     (done / "done.json").write_text("{}")
     assert run_jobs.launch(launch_args(dry=True)) == [] and submitted == []
     launched = run_jobs.launch(launch_args())
-    chat = [c["name"] for c in run_jobs.job_configs() if c["task"] != "mmlu"]
-    assert [job["name"] for job in launched] == ["mlp_q0.5", "block_q0.25", *chat]
+    skipped = {"mlp_q0.25", "block_q0.5"}
+    pending = [c["name"] for c in run_jobs.job_configs() if c["name"] not in skipped]
+    assert [job["name"] for job in launched] == pending
     body = submitted[0]
     assert body["instance_type"] == "a100.1gpu" and body["region"] == "SR004"
     workdir = tmp_path / "staging" / "abc123" / run_jobs.SUBDIR
@@ -538,7 +549,11 @@ def test_question_sample_is_seeded_per_subject():
 
 
 def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
-    chat = [c for c in run.experiment_configs if c.get("task") == "mmlu_stem_chat"]
+    chat = [
+        c
+        for c in run.experiment_configs
+        if c.get("task") == "mmlu_stem_chat" and c["name"].startswith("chat_")
+    ]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
         "chat_baseline_repeat",
@@ -546,6 +561,11 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
         "chat_mlp_q0.5",
         "chat_block_q0.25",
         "chat_block_q0.5",
+        "chat_mlp_q0.6",
+        "chat_mlp_q0.7",
+        "chat_mlp_q0.8",
+        "chat_block_q0.3",
+        "chat_block_q0.4",
     ]
     for config in chat:
         assert len(config["chat_subjects"]) * config["chat_per_subject"] == 304
@@ -668,3 +688,219 @@ def test_poster_retries_transient_failures(monkeypatch):
     )
     with pytest.raises(ConnectionError):
         chat_eval.poster("http://x")({"a": 1})
+
+
+def test_schedule_maps_equal_consecutive_layer_groups():
+    schedule = validate_schedule(["0", "0.5", 0.75, 0.9])
+    assert [group_quantile(schedule, layer, 8) for layer in range(8)] == [
+        0,
+        0,
+        0.5,
+        0.5,
+        0.75,
+        0.75,
+        0.9,
+        0.9,
+    ]
+    assert group_quantile([0.1] * 8, 47, 48) == 0.1
+    with pytest.raises(ValueError):
+        group_quantile([0.1] * 5, 0, 48)
+    for bad in ([], [0.5, 1.0], [float("nan")]):
+        with pytest.raises(ValueError):
+            validate_schedule(bad)
+
+
+def test_schedule_rows_pass_and_check_the_schedule(monkeypatch):
+    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
+    run.select("prof_block_g2_q0.75")
+    args = run.rounding_args()
+    schedule = args[args.index("--round-activations-quantiles") + 1]
+    assert schedule == "0.0,0.0,0.75,0.0,0.0,0.0,0.0,0.0"
+    served = {"site": "block", "epsilon": 0.0, "quantile": 0.0}
+    assert run.config_mismatch(dict(served, quantiles=[0.0] * 8))
+    quantiles = [0.0, 0.0, 0.75, 0.0, 0.0, 0.0, 0.0, 0.0]
+    assert not run.config_mismatch(dict(served, quantiles=quantiles))
+    run.select("chat_mlp_q0.5")
+    assert not run.config_mismatch(
+        {"site": "mlp", "epsilon": 0.0, "quantile": 0.5, "quantiles": None}
+    )
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--round-activations-quantiles", "0.5,x"],
+        ["--round-activations-quantiles", "0.5,1.0"],
+        ["--round-activations-eps", "0.1", "--round-activations-quantiles", "0.5"],
+        ["--name", "prof_baseline", "--round-activations-quantiles", "0.5"],
+    ],
+)
+def test_run_cli_rejects_bad_schedules(flags):
+    result = subprocess.run(
+        [sys.executable, str(run.SCRIPT), "eval", *flags],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, result.stderr
+
+
+def test_profiling_grid_is_one_group_at_a_time():
+    prof = [c for c in run.experiment_configs if c.get("name", "").startswith("prof_")]
+    assert len(prof) == 50 == len({c["name"] for c in prof})
+    for config in prof:
+        schedule = config["round_activations_quantiles"]
+        assert len(schedule) == 8 and config["chat_reference"] == "chat_baseline"
+        assert config["round_activations_quantile"] == 0 and config["launcher"] == "mls"
+        nonzero = [value for value in schedule if value]
+        if config["name"].startswith("prof_baseline"):
+            assert not nonzero
+        else:
+            _, site, group, level = config["name"].split("_")
+            assert config["round_activations_site"] == site
+            assert schedule[int(group[1:])] == float(level[1:]) and len(nonzero) == 1
+            assert float(level[1:]) in run.PROFILE_LEVELS[site]
+
+
+class EncodingTokenizer:
+    def apply_chat_template(self, messages, **kwargs):
+        return "<p:" + messages[0]["content"][-3:] + ">"
+
+    def encode(self, text, add_special_tokens=True):
+        assert add_special_tokens is False
+        return [ord(c) for c in text]
+
+
+def test_reference_run_reuses_questions_and_scores_reference(tmp_path, monkeypatch):
+    references = [
+        dict(
+            QUESTION,
+            index=i,
+            prompt=f"P{i}",
+            reasoning="ab",
+            prediction="B",
+            correct=True,
+            mode="natural",
+        )
+        for i in range(2)
+    ]
+    references[1].update(
+        reasoning="x", forced_suffix="!", forced_text="B", mode="forced_cap"
+    )
+    monkeypatch.setattr(chat_eval, "reference_records", lambda name, limit: references)
+    scored = []
+
+    def post(body):
+        if body.get("echo"):
+            scored.append(body["prompt"])
+            count = len(body["prompt"]) + 1
+            return {
+                "choices": [
+                    {"logprobs": {"token_logprobs": [None] + [-0.5] * (count - 1)}}
+                ]
+            }
+        return {
+            "choices": [{"text": "Answer: B", "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 3},
+        }
+
+    config = dict(run.PROFILE_CONFIG, chat_concurrency=2)
+    result = chat_eval.run_eval(
+        config, tmp_path, "http://x", post=post, tokenizer=EncodingTokenizer()
+    )
+    records = [json.loads(line) for line in (tmp_path / "samples.jsonl").open()]
+    assert [r["index"] for r in records] == [0, 1]
+    assert scored == [[ord(c) for c in "P0ab"], [ord(c) for c in "P1x!B"]]
+    assert [r["reference_tokens"] for r in records] == [2, 3]
+    assert records[1]["reference_logprob"] == -1.5
+    assert result["reference"] == {
+        "name": "chat_baseline",
+        "tokens": 5,
+        "logprob": -2.5,
+        "nll_per_token": 0.5,
+    }
+
+
+def test_reference_scoring_rejects_missing_logprobs():
+    def post(body):
+        return {"choices": [{"logprobs": {"token_logprobs": [None, None, -1.0]}}]}
+
+    with pytest.raises(RuntimeError, match="Missing prompt"):
+        chat_eval.score_reference([1], [2, 3], post, CHAT)
+
+
+def test_reference_records_limit_keeps_first_per_subject(tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    output = tmp_path / "jobs" / "chat_baseline" / "a"
+    output.mkdir(parents=True)
+    rows = [{"subject": s, "index": i} for s in ("a", "b") for i in range(3)]
+    (output / "samples.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    marker = tmp_path / "jobs" / "chat_baseline" / "done.json"
+    marker.write_text(json.dumps({"output": str(output)}))
+    kept = chat_eval.reference_records("chat_baseline", 2)
+    assert [(r["subject"], r["index"]) for r in kept] == [
+        ("a", 0),
+        ("a", 1),
+        ("b", 0),
+        ("b", 1),
+    ]
+    assert len(chat_eval.reference_records("chat_baseline")) == 6
+
+
+def test_allocation_meets_budget_at_minimum_cost():
+    costs = {(g, q): (10 if g == 0 else 1) * q for g in range(4) for q in (0.5, 0.9)}
+    plan = sensitivity.allocate(costs, (0.5, 0.9), 0.6, 4)
+    assert plan["schedule"][0] == 0.0 and plan["mean"] >= 0.6
+    brute = min(
+        sum(costs[(g, q)] for g, q in enumerate(c) if q)
+        for c in itertools.product((0.0, 0.5, 0.9), repeat=4)
+        if sum(c) / 4 >= 0.6
+    )
+    assert plan["predicted_cost"] == pytest.approx(brute)
+    with pytest.raises(ValueError, match="unreachable"):
+        sensitivity.allocate(costs, (0.5,), 0.6, 4)
+
+
+def write_profile_run(root, name, schedule, nll, predictions):
+    output = root / name
+    output.mkdir()
+    records = {
+        (s, 0): {"prediction": p, "correct": p == "A"}
+        for s, p in zip(("s0", "s1"), predictions)
+    }
+    result = {
+        "accuracy": sum(r["correct"] for r in records.values()) / 2,
+        "modes": {"forced_cap": 1},
+        "reasoning_tokens": {"mean": 9},
+        "reference": {"nll_per_token": nll},
+    }
+    (output / "results.json").write_text(json.dumps(result))
+    layers = [
+        {"floats": 100, "newly_zeroed_floats": int(100 * q), "already_zero_floats": 0}
+        for q in schedule
+        for _ in range(2)
+    ]
+    (output / "rounding-before.json").write_text(json.dumps({"layers": []}))
+    (output / "rounding-after.json").write_text(json.dumps({"layers": layers}))
+    config = {
+        "round_activations_site": "block",
+        "round_activations_quantiles": schedule,
+    }
+    return config, output, records
+
+
+def test_profile_rows_report_cost_changes_and_group_shares(tmp_path):
+    runs = {
+        "prof_baseline": write_profile_run(tmp_path, "b", [0, 0, 0], 0.4, "AA"),
+        "prof_block_g1_q0.5": write_profile_run(tmp_path, "g", [0, 0.5, 0], 0.7, "AB"),
+    }
+    reference = {
+        ("s0", 0): {"prediction": "A", "correct": True},
+        ("s1", 0): {"prediction": "A", "correct": True},
+    }
+    rows = {r["experiment"]: r for r in sensitivity.profile(runs, reference)}
+    row = rows["prof_block_g1_q0.5"]
+    assert row["group"] == 1 and row["layers"] == "2-3" and row["quantile"] == 0.5
+    assert row["delta_nll_per_token"] == pytest.approx(0.3)
+    assert (row["changed_vs_baseline"], row["broken_vs_baseline"]) == (1, 1)
+    assert row["group_zero_percent"] == 50 and row["other_groups_max_zero_percent"] == 0
+    assert rows["prof_baseline"]["delta_nll_per_token"] == 0
