@@ -91,7 +91,7 @@ per-layer CSVs from the sweep manifest.
 
 ## Results
 
-Twelve CPU correctness/API/sweep-resume tests pass. Live GPU checks pass for both locations
+Thirteen CPU correctness/API/sweep-resume/session tests pass. Live GPU checks pass for both locations
 with zero and nonzero thresholds, including exact original completion/logprob
 parity at zero, chunked prefill, cached prefixes, concurrent requests, multiple
 prompts/choices, chat, streaming, and error handling. The implementation passed

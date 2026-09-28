@@ -49,7 +49,8 @@ SCRIPT = Path(__file__).resolve()
 def session_exists(session=None):
     return (
         subprocess.run(
-            ["tmux", "has-session", "-t", session or CONFIG["session"]],
+            # "=" disables tmux prefix matching (the sweep session shares a prefix).
+            ["tmux", "has-session", "-t", "=" + (session or CONFIG["session"])],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode
@@ -150,7 +151,7 @@ def stop():
             "tmux",
             "send-keys",
             "-t",
-            CONFIG["session"],
+            f"={CONFIG['session']}:",
             "C-c",
         ],
         check=True,

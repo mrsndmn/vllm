@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import subprocess
 
 import pytest
 import torch
@@ -178,8 +179,30 @@ def test_sweep_rejects_foreign_manifest_entries(tmp_path, monkeypatch, mismatch)
     config = dict(run.experiment_configs[0])
     if mismatch == "config":
         config["round_activations_eps"] = 0.5
-    entry = record(tmp_path, "old", config, limit=2)
+    entry = record(tmp_path, "old", config, limit=1 if mismatch == "config" else 2)
     (tmp_path / "rounding-smoke.json").write_text(json.dumps([entry]))
     with pytest.raises(RuntimeError, match="unconfigured"):
         run.sweep(1)
     assert evaluated == []
+
+
+def test_server_session_checks_ignore_prefixed_sweep_session(tmp_path, monkeypatch):
+    monkeypatch.delenv("TMUX", raising=False)
+    monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
+    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG, session="srv"))
+    subprocess.run(
+        ["tmux", "new-session", "-d", "-s", "srv-sweep", "sleep 600"], check=True
+    )
+    try:
+        assert run.session_exists("srv-sweep")
+        assert not run.session_exists()
+        run.stop()
+        assert run.session_exists("srv-sweep")
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", "srv", "sleep 600"], check=True
+        )
+        run.stop()
+        assert not run.session_exists()
+        assert run.session_exists("srv-sweep")
+    finally:
+        subprocess.run(["tmux", "kill-server"], check=False)
