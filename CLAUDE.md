@@ -25,7 +25,8 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   --round-activations-site mlp`: per-token quantile zeroing (exclusive with eps).
 - `experiments/qwen3_mmlu/run.py job --name <row> [--limit N]`: MLSpace container
   entry point; serves one `launcher="mls"` registry row as a subprocess (no tmux),
-  evaluates, stops the server, and writes `jobs[-smoke]/<row>/done.json` last.
+  evaluates, stops the server, and writes `jobs/<row>/done.json` last
+  (`jobs-smoke/limitN/<row>/` for smoke runs).
 - `/home/jovyan/.mlspace/envs/arkhip/bin/python
   experiments/qwen3_mmlu/run_jobs.py [--dry] [--filter S] [--limit N] [--force]`:
   submits one `a100.1gpu` job per pending quantile row; `--collect` writes

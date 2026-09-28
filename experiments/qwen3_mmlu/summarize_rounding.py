@@ -64,6 +64,11 @@ def summarize_entry(entry):
             100 * result["results"][f"mmlu_{name}"]["acc,none"]
         )
     row["newly_zeroed_float_percent"] = 100 * totals[1] / totals[0]
+    # Quantile zeroing guarantees at least q of this share per token row.
+    row["total_zero_float_percent"] = 100 * (totals[1] + totals[2]) / totals[0]
+    row["min_layer_total_zero_percent"] = min(
+        100 * (layer[1] + layer[2]) / layer[0] for layer in counts
+    )
     row["affected_token_layer_percent"] = 100 * totals[4] / totals[3]
     row["executed_tokens_per_layer"] = counts[0][3]
     row["initial_cached_tokens_excluded"] = (
@@ -81,7 +86,10 @@ def main():
     )
     args = parser.parse_args()
     rows, per_layer = [], []
-    for entry in json.loads(args.manifest.read_text()):
+    entries = json.loads(args.manifest.read_text())
+    if not entries:
+        raise SystemExit(f"No completed runs in {args.manifest}")
+    for entry in entries:
         row, layers = summarize_entry(entry)
         rows.append(row)
         per_layer.extend({"experiment": row["experiment"], **layer} for layer in layers)

@@ -376,7 +376,9 @@ def launch_sweep(limit):
 
 
 def job_root(name, limit):
-    return ARTIFACTS / ("jobs-smoke" if limit else "jobs") / name
+    if limit:
+        return ARTIFACTS / "jobs-smoke" / f"limit{limit}" / name
+    return ARTIFACTS / "jobs" / name
 
 
 def job(name, limit):

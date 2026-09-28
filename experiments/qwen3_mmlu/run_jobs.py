@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -68,7 +69,12 @@ def stage(commit):
         subprocess.run(["tar", "-x", "-C", str(tmp)], stdin=archive.stdout, check=True)
         if archive.wait():
             raise RuntimeError("git archive failed")
-        os.rename(tmp, target)
+        try:
+            os.rename(tmp, target)
+        except OSError:  # A concurrent launch staged the same commit first.
+            if not target.exists():
+                raise
+            shutil.rmtree(tmp)
     return target / SUBDIR
 
 

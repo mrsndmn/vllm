@@ -34,6 +34,12 @@ The fraction of observed activations newly set to zero by zeroing, excluding
 values that were already zero.
 _Avoid_: sparsity (unqualified), wiped values
 
+**Total zero share**:
+The fraction of observed activations that are zero after zeroing, including
+values that were already zero; quantile zeroing guarantees at least q of it in
+every token row.
+_Avoid_: sparsity (unqualified)
+
 **Local baseline**:
 The locally served full-MMLU run with the zeroing hook active and nothing zeroed
 (`mlp`, ε = 0; 81.98%), against which zeroing results are compared.

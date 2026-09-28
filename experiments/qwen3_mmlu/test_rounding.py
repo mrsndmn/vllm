@@ -302,7 +302,7 @@ def test_job_stops_server_and_writes_marker_last(tmp_path, monkeypatch, fail):
         return servers[-1]
 
     def evaluate(limit, output, workdir):
-        assert not (tmp_path / "jobs-smoke" / "mlp_q0.5" / "done.json").exists()
+        assert not (run.job_root("mlp_q0.5", 1) / "done.json").exists()
         if fail:
             raise RuntimeError("evaluation failed")
         return output
@@ -312,7 +312,8 @@ def test_job_stops_server_and_writes_marker_last(tmp_path, monkeypatch, fail):
     monkeypatch.setattr(run.subprocess, "Popen", popen)
     monkeypatch.setattr(run, "wait_ready", lambda alive: alive())
     monkeypatch.setattr(run, "evaluate", evaluate)
-    marker = tmp_path / "jobs-smoke" / "mlp_q0.5" / "done.json"
+    marker = run.job_root("mlp_q0.5", 1) / "done.json"
+    assert marker.parent != run.job_root("mlp_q0.5", 2)
     if fail:
         with pytest.raises(RuntimeError, match="evaluation failed"):
             run.job("mlp_q0.5", 1)
@@ -386,3 +387,24 @@ def test_stage_extracts_only_the_committed_experiment_directory(tmp_path, monkey
     assert [p.name for p in (tmp_path / commit).iterdir()] == ["experiments"]
     assert run_jobs.stage(commit) == workdir
     assert [p.name for p in tmp_path.iterdir()] == [commit]
+
+    def racing_rename(src, dst):  # another launcher finished staging first
+        run_jobs.shutil.copytree(src, dst)
+        raise OSError(39, "Directory not empty", dst)
+
+    monkeypatch.setattr(run_jobs.os, "rename", racing_rename)
+    other = run_jobs.git("rev-parse", "HEAD~1").strip()
+    assert run_jobs.stage(other) == tmp_path / other / run_jobs.SUBDIR
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted([commit, other])
+
+
+def test_summary_reports_total_zero_share_and_rejects_empty_manifest(
+    tmp_path, monkeypatch
+):
+    import summarize_rounding
+
+    manifest = tmp_path / "empty.json"
+    manifest.write_text("[]")
+    monkeypatch.setattr("sys.argv", ["summarize", "--manifest", str(manifest)])
+    with pytest.raises(SystemExit, match="No completed runs"):
+        summarize_rounding.main()

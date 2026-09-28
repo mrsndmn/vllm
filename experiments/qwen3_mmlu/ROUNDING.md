@@ -64,7 +64,9 @@ $M experiments/qwen3_mmlu/run_jobs.py --collect              # manifest of finis
 The launcher refuses uncommitted tracked changes in this directory, skips rows
 with a done marker (unless `--force`) or an identical queued/running job, and
 stages `experiments/qwen3_mmlu` once per commit under `<artifacts>/staging/`.
-Smoke runs (`--limit`) use `jobs-smoke/` instead of `jobs/`.
+Smoke runs (`--limit N`) use `jobs-smoke/limitN/` instead of `jobs/`.
+Summaries report both the newly zeroed share and the total zero share (newly
+zeroed plus already zero); quantile zeroing guarantees the latter is at least q.
 
 ### Thresholds and counters
 
