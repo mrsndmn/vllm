@@ -266,7 +266,11 @@ def test_invalid_quantile_is_rejected(value):
 
 
 def test_registry_keeps_fixed_eps_rows_and_adds_named_quantile_jobs():
-    jobs = [c for c in run_jobs.job_configs() if c["task"] == "mmlu"]
+    jobs = [
+        c
+        for c in run_jobs.job_configs()
+        if c["task"] == "mmlu" and not c["name"].startswith("adapt_")
+    ]
     assert [c["name"] for c in jobs] == [
         "mlp_q0.25",
         "mlp_q0.5",
@@ -552,7 +556,9 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
     chat = [
         c
         for c in run.experiment_configs
-        if c.get("task") == "mmlu_stem_chat" and c["name"].startswith("chat_")
+        if c.get("task") == "mmlu_stem_chat"
+        and c["name"].startswith("chat_")
+        and not c["name"].startswith("chat_adapt_")
     ]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
@@ -971,3 +977,12 @@ def test_live_check_counts_follow_the_schedule():
         validate_live.check_counts({"rounding_statistics": {"layers": layers}}, config)
     assert validate_live.zeroing(config)
     assert not validate_live.zeroing(dict(config, quantiles=[0.0] * 8))
+
+
+def test_registered_adaptive_schedules_meet_their_budgets():
+    for (site, budget), schedule in run.ADAPTIVE_SCHEDULES.items():
+        assert len(schedule) == run.GROUPS and budget in run.ADAPTIVE_BUDGETS[site]
+        assert set(schedule) <= {0.0, *run.PROFILE_LEVELS[site]}
+        assert sum(schedule) / run.GROUPS >= budget - 1e-9
+    names = [c["name"] for c in run_jobs.job_configs("*adapt_*")]
+    assert len(names) == 2 * len(run.ADAPTIVE_SCHEDULES) == len(set(names))

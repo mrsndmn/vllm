@@ -161,7 +161,16 @@ experiment_configs += [
 ]
 # Stage C: schedules chosen by sensitivity.py from Stage A (filled after Stage A),
 # keyed by (site, budget = mean zero share); each gets a harness and a chat row.
-ADAPTIVE_SCHEDULES = {}
+# From sensitivity.py on the prof_* runs (commit 747cfb715b); see
+# adaptive-schedules.json. Block at 0.5 allocated [0.5] * 8, i.e. the existing
+# uniform block_q0.5 rows, so it has no separate adaptive row.
+ADAPTIVE_SCHEDULES = {
+    ("mlp", 0.6): [0.75, 0.75, 0.75, 0.5, 0.75, 0.5, 0.5, 0.5],
+    ("mlp", 0.7): [0.75, 0.75, 0.75, 0.5, 0.75, 0.75, 0.75, 0.75],
+    ("mlp", 0.8): [0.9, 0.75, 0.9, 0.75, 0.75, 0.75, 0.75, 0.9],
+    ("block", 0.3): [0.5, 0.25, 0.25, 0.25, 0.25, 0.25, 0.25, 0.5],
+    ("block", 0.4): [0.5, 0.5, 0.5, 0.25, 0.25, 0.5, 0.25, 0.5],
+}
 
 
 def adaptive_rows(schedules):
