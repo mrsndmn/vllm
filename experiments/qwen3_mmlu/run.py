@@ -35,18 +35,21 @@ CONFIG = experiment_configs[0]
 BASE_CONFIG = CONFIG.copy()
 experiment_configs = [
     dict(BASE_CONFIG, round_activations_site=site, round_activations_eps=eps)
-    for site in ("mlp", "block")
-    for eps in (0.0, 1e-4, 1e-3, 1e-2)
+    for site, epsilons in (
+        ("mlp", (0.0, 1e-4, 1e-3, 1e-2, 1e-1)),
+        ("block", (1e-2, 1e-1)),
+    )
+    for eps in epsilons
 ]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
 
 
-def session_exists():
+def session_exists(session=None):
     return (
         subprocess.run(
-            ["tmux", "has-session", "-t", CONFIG["session"]],
+            ["tmux", "has-session", "-t", session or CONFIG["session"]],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ).returncode
@@ -277,12 +280,19 @@ def evaluate(limit):
 
 def sweep(limit):
     manifest = ARTIFACTS / ("rounding-smoke.json" if limit else "rounding-sweep.json")
-    if manifest.exists():
-        raise RuntimeError(
-            f"Sweep manifest already exists: {manifest}; preserve it first"
-        )
-    results = []
+    # Resume: configurations already recorded for this limit are not rerun.
+    results = json.loads(manifest.read_text()) if manifest.exists() else []
+    completed = []
+    for entry in results:
+        stored = json.loads((Path(entry["output"]) / "experiment.json").read_text())
+        if entry.get("limit") != limit or stored not in experiment_configs:
+            raise RuntimeError(
+                f"{manifest} records an unconfigured run: {entry['output']}"
+            )
+        completed.append(stored)
     for config in experiment_configs:
+        if config in completed:
+            continue
         CONFIG.clear()
         CONFIG.update(config)
         stop()
@@ -295,11 +305,40 @@ def sweep(limit):
                 "epsilon": config["round_activations_eps"],
                 "output": str(output),
             }
+            | ({"limit": limit} if limit else {})
         )
+        completed.append(config)
         manifest.write_text(json.dumps(results, indent=2) + "\n")
         print(
-            f"Completed {len(results)}/{len(experiment_configs)}: {output}", flush=True
+            f"Completed {len(completed)}/{len(experiment_configs)}: {output}",
+            flush=True,
         )
+    print(f"Sweep complete: {manifest}", flush=True)
+
+
+def launch_sweep(limit):
+    """Run the sweep in its own tmux session so it outlives this shell."""
+    session = CONFIG["session"] + "-sweep"
+    if session_exists(session):
+        raise RuntimeError(f"Sweep session already exists: {session}")
+    log = ARTIFACTS / ("rounding-smoke.log" if limit else "rounding-sweep.log")
+    command = [CONFIG["python"], str(SCRIPT), "sweep"]
+    if limit:
+        command += ["--limit", str(limit)]
+    subprocess.run(
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            session,
+            "-c",
+            str(ARTIFACTS),
+            f"{shlex.join(command)} >> {shlex.quote(str(log))} 2>&1",
+        ],
+        check=True,
+    )
+    print(f"Started {session}; see {log}")
 
 
 def main():
@@ -323,9 +362,14 @@ def main():
     parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], default="mlp"
     )
+    parser.add_argument(
+        "--detach", action="store_true", help="Run sweep in a tmux session"
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
+    if args.detach and args.action != "sweep":
+        parser.error("--detach only applies to sweep")
     if args.round_activations_eps is not None:
         import math
 
@@ -344,6 +388,8 @@ def main():
         start()
     elif args.action == "eval":
         evaluate(args.limit)
+    elif args.action == "sweep" and args.detach:
+        launch_sweep(args.limit)
     elif args.action == "sweep":
         sweep(args.limit)
     else:

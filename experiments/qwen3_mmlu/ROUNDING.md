@@ -64,12 +64,18 @@ the checkout under the artifact root specified in `run.py`.
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python -m pytest experiments/qwen3_mmlu/test_rounding.py --confcutdir=experiments/qwen3_mmlu -q
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py sweep --limit 1
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py sweep
+# Same sweep in the detached tmux session vllm-qwen3-30b-a3b-sweep:
+/home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py sweep --detach
 ```
 
 The sweep restarts the local server between experiments and leaves the final
 configuration running. Each successful evaluation records its output directory
 in a manifest, plus active server configuration and statistics before/after.
-An existing manifest prevents accidental reruns. Evaluation uses the same
+Rerunning resumes: configurations whose stored `experiment.json` is already in
+the manifest are skipped; a manifest entry that matches no configuration (or a
+different `--limit`) stops the sweep. `--detach` appends output to
+`rounding-sweep.log` (or `rounding-smoke.log`) in the artifact root; the tmux
+session ends when the sweep finishes or fails. Evaluation uses the same
 standard likelihood-scoring harness as the original baseline. No MLS jobs run.
 Before/after benchmark counter snapshots cover all server traffic in that
 interval. Run without unrelated inference when interpreting them as MMLU
@@ -85,7 +91,7 @@ per-layer CSVs from the sweep manifest.
 
 ## Results
 
-Nine CPU correctness/API tests pass. Live GPU checks pass for both locations
+Twelve CPU correctness/API/sweep-resume tests pass. Live GPU checks pass for both locations
 with zero and nonzero thresholds, including exact original completion/logprob
 parity at zero, chunked prefill, cached prefixes, concurrent requests, multiple
 prompts/choices, chat, streaming, and error handling. The implementation passed
@@ -100,3 +106,8 @@ or accuracy effects.
 
 - 2026-09-27: Added separate expert-activation and residual-output experiments,
   request-scoped counters, API reporting, and a local sweep launcher.
+- 2026-09-28: MLP sweep (epsilon 0 to 1e-2) completed. The first block run
+  (epsilon 0) was interrupted at 28% because its launching shell ended; that
+  directory, `mmlu/20260928-050930`, is incomplete and excluded. Added
+  sweep resume and `--detach`. Extended the MLP sweep with 1e-1 and set block to
+  1e-2 and 1e-1.

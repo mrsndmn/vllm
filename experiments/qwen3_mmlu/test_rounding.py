@@ -8,6 +8,8 @@ import torch
 from rounding_api import RoundingMiddleware
 from rounding_stats import connect, read_stats, threshold, validate_eps
 
+import run
+
 
 def test_threshold_counts_new_zeros_and_affected_tokens():
     values = torch.tensor([[0, 0.125, -0.125, 0.25], [0, 0, 1, -1]])
@@ -117,3 +119,67 @@ def test_api_attaches_statistics_after_fragmented_response(
         result = json.loads(body)
     assert result["rounding_statistics"]["layers"][0]["newly_zeroed_floats"] == 1
     assert not messages[-1].get("more_body", False)
+
+
+def fake_sweep(tmp_path, monkeypatch):
+    evaluated = []
+
+    def evaluate(limit):
+        output = tmp_path / f"run-{len(evaluated)}"
+        output.mkdir()
+        (output / "experiment.json").write_text(json.dumps(run.CONFIG))
+        evaluated.append(dict(run.CONFIG))
+        return output
+
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
+    for name in ("stop", "start", "wait_ready"):
+        monkeypatch.setattr(run, name, lambda: None)
+    monkeypatch.setattr(run, "evaluate", evaluate)
+    return evaluated
+
+
+def record(tmp_path, name, config, limit=None):
+    output = tmp_path / name
+    output.mkdir()
+    (output / "experiment.json").write_text(json.dumps(config))
+    entry = {
+        "site": config["round_activations_site"],
+        "epsilon": config["round_activations_eps"],
+        "output": str(output),
+    }
+    return entry | ({"limit": limit} if limit else {})
+
+
+def test_sweep_resumes_only_unrecorded_configs(tmp_path, monkeypatch):
+    evaluated = fake_sweep(tmp_path, monkeypatch)
+    done = run.experiment_configs[1]
+    manifest = tmp_path / "rounding-sweep.json"
+    manifest.write_text(json.dumps([record(tmp_path, "old", done)]))
+    run.sweep(None)
+    assert done not in evaluated
+    assert evaluated == [c for c in run.experiment_configs if c != done]
+    entries = json.loads(manifest.read_text())
+    assert entries[0]["output"] == str(tmp_path / "old")
+    stored = [
+        json.loads((run.Path(e["output"]) / "experiment.json").read_text())
+        for e in entries
+    ]
+    assert sorted(map(json.dumps, stored)) == sorted(
+        map(json.dumps, run.experiment_configs)
+    )
+    run.sweep(None)
+    assert len(evaluated) == len(run.experiment_configs) - 1
+
+
+@pytest.mark.parametrize("mismatch", ["config", "limit"])
+def test_sweep_rejects_foreign_manifest_entries(tmp_path, monkeypatch, mismatch):
+    evaluated = fake_sweep(tmp_path, monkeypatch)
+    config = dict(run.experiment_configs[0])
+    if mismatch == "config":
+        config["round_activations_eps"] = 0.5
+    entry = record(tmp_path, "old", config, limit=2)
+    (tmp_path / "rounding-smoke.json").write_text(json.dumps([entry]))
+    with pytest.raises(RuntimeError, match="unconfigured"):
+        run.sweep(1)
+    assert evaluated == []

@@ -16,7 +16,10 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/run.py restart --round_activations_eps 1e-4
   --round-activations-site mlp`: instrumented serving (`block` is the other site).
 - `experiments/qwen3_mmlu/run.py sweep --limit 1`: all configured smoke runs.
-- `experiments/qwen3_mmlu/run.py sweep`: sequential local full MMLU sweep.
+- `experiments/qwen3_mmlu/run.py sweep`: sequential local full MMLU sweep;
+  resumes by skipping configurations already recorded in its manifest.
+- `experiments/qwen3_mmlu/run.py sweep --detach`: same sweep in the detached
+  tmux session `vllm-qwen3-30b-a3b-sweep`, logging to `rounding-sweep.log`.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
