@@ -91,16 +91,43 @@ per-layer CSVs from the sweep manifest.
 
 ## Results
 
-Thirteen CPU correctness/API/sweep-resume/session tests pass. Live GPU checks pass for both locations
-with zero and nonzero thresholds, including exact original completion/logprob
-parity at zero, chunked prefill, cached prefixes, concurrent requests, multiple
-prompts/choices, chat, streaming, and error handling. The implementation passed
-independent adversarial review. Full threshold-sweep results are pending.
+Thirteen CPU correctness/API/sweep-resume/session tests pass. Live GPU checks
+pass for both locations with zero and nonzero thresholds, including exact
+original completion/logprob parity at zero, chunked prefill, cached prefixes,
+concurrent requests, multiple prompts/choices, chat, streaming, and error
+handling. The implementation passed independent adversarial review.
+
+Full 5-shot MMLU sweep completed on 2026-09-28 (14,042 questions per run, all
+samples validated by `summarize_rounding.py`). "Zeroed" is the share of all
+observed activation floats newly set to zero; "flips" counts changed predicted
+answers versus `mlp` epsilon 0 (fixed/broken).
+
+| Experiment | MMLU % | Hum. | Soc. | STEM | Other | Zeroed % | Flips (fixed/broken) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| original server | 81.98 | 75.11 | 90.06 | 82.84 | 83.52 | — | — |
+| mlp 0 | 81.98 | 75.11 | 90.12 | 82.87 | 83.42 | 0.00 | — |
+| mlp 1e-4 | 82.01 | 75.20 | 90.02 | 82.94 | 83.46 | 0.46 | 172 (72/68) |
+| mlp 1e-3 | 82.15 | 75.32 | 90.15 | 83.13 | 83.55 | 2.62 | 171 (78/55) |
+| mlp 1e-2 | 82.10 | 75.18 | 89.99 | 83.35 | 83.49 | 14.90 | 212 (92/76) |
+| mlp 1e-1 | 81.60 | 75.07 | 88.76 | 82.75 | 83.23 | 60.39 | 826 (314/368) |
+| block 1e-2 | 82.22 | 75.77 | 89.63 | 83.35 | 83.52 | 6.80 | 347 (151/117) |
+| block 1e-1 | 24.46 | 24.55 | 22.75 | 26.17 | 24.27 | 75.71 | 10736 (697/8775) |
+
+Zeroing is concentrated in early layers: at block 1e-2, layer 0 loses 46.7% and
+the last layer 0.5%; at block 1e-1, layers 0-2 lose about 99%; at mlp 1e-1, the
+per-layer share ranges from 99.2% (layer 0) to 23.4% (layer 47). The original
+server versus mlp 0 differs in 16 predictions with identical accuracy.
+Aggregate and per-layer CSVs are `rounding-sweep-summary.csv` and
+`rounding-sweep-layers.csv` in the artifact root.
 
 ## Conclusions
 
-Await correctness validation and full benchmark results before judging sparsity
-or accuracy effects.
+Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
+with no measurable MMLU change; epsilon 1e-1 zeroes about 60% for a 0.38 pp
+drop. The residual stream tolerates 1e-2 (about 7% zeroed) but collapses to
+chance at 1e-1, where early layers are almost entirely zeroed. Next steps:
+probe mlp between 1e-2 and 1e-1 and block between 1e-2 and 1e-1, or use
+per-layer thresholds.
 
 ## Changelog
 
@@ -111,3 +138,4 @@ or accuracy effects.
   directory, `mmlu/20260928-050930`, is incomplete and excluded. Added
   sweep resume and `--detach`. Extended the MLP sweep with 1e-1 and set block to
   1e-2 and 1e-1.
+- 2026-09-28: Completed mlp 1e-1 and block 1e-2/1e-1; recorded full results.
