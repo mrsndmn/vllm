@@ -7,7 +7,7 @@ import runpy
 import sys
 from pathlib import Path
 
-from rounding_stats import connect, validate_eps
+from rounding_stats import connect, validate_eps, validate_quantile
 
 
 def main():
@@ -19,10 +19,18 @@ def main():
         type=validate_eps,
     )
     parser.add_argument(
+        "--round-activations-quantile",
+        "--round_activations_quantile",
+        default=0.0,
+        type=validate_quantile,
+    )
+    parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], required=True
     )
     parser.add_argument("--rounding-db", type=Path, required=True)
     args, server_args = parser.parse_known_args()
+    if args.round_activations_eps and args.round_activations_quantile:
+        parser.error("use either an epsilon or a quantile, not both")
     if importlib.metadata.version("vllm") != "0.14.1":
         raise RuntimeError("This experimental wrapper requires installed vLLM 0.14.1")
     if args.rounding_db.exists():
@@ -32,6 +40,7 @@ def main():
     os.environ.update(
         {
             "ROUND_ACTIVATIONS_EPS": str(args.round_activations_eps),
+            "ROUND_ACTIVATIONS_QUANTILE": str(args.round_activations_quantile),
             "ROUND_ACTIVATIONS_SITE": args.round_activations_site,
             "ROUND_ACTIVATIONS_DB": str(args.rounding_db.resolve()),
             "VLLM_ENABLE_FUSED_MOE_ACTIVATION_CHUNKING": "0",

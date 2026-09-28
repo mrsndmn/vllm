@@ -4,7 +4,8 @@
 
 Setting small intermediate activations to zero may create sparsity without a
 material change in MMLU accuracy. Expert activations and complete transformer
-block outputs are separate experiments.
+block outputs are separate experiments. Quantile zeroing tests whether a fixed
+per-token sparsity (25% or 50% of each token row) is tolerated at either site.
 
 ## Setup
 
@@ -32,6 +33,40 @@ experts. `block` tests the combined residual stream in FP32, matching the sum
 inside fused add/RMSNorm. Both residual operands are zeroed at selected positions;
 all other operands retain their original bit patterns. This avoids introducing
 an extra BF16 rounding operation throughout the residual stream.
+
+### Quantile zeroing (MLSpace jobs)
+
+`--round-activations-quantile q` (q in [0, 1), exclusive with a nonzero
+epsilon) replaces the constant with a per-token-row cutoff: the row's
+floor(q * width)-th smallest magnitude (width 6144 for `mlp`, 2048 for `block`).
+Nonzero finite values at or below it are zeroed, ties included, so each row ends
+with at least a q share of zeros; values already zero count toward q. The rule is
+independent of batching. See `docs/adr/0001-per-token-quantile-zeroing.md`.
+
+Registry rows with `launcher="mls"` run as MLSpace jobs, one `a100.1gpu` job per
+row. `run_jobs.py` needs the `mls` client environment; each job runs
+`run.py job --name <row>` from a per-commit snapshot of this directory, serves
+that row inside the container, evaluates MMLU with the same settings as local
+runs, and writes `jobs/<row>/done.json` last. Job containers use the environment
+path `/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126` because `~/.mlspace` is
+not mounted there (see `docs/adr/0002-single-registry-and-subdir-staging-for-mls-jobs.md`).
+
+```bash
+/home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py restart --round-activations-quantile 0.5 --round-activations-site mlp
+M=/home/jovyan/.mlspace/envs/arkhip/bin/python
+$M experiments/qwen3_mmlu/run_jobs.py --dry                  # print payloads only
+$M experiments/qwen3_mmlu/run_jobs.py --filter mlp_q0.5 --limit 1   # smoke job
+$M experiments/qwen3_mmlu/run_jobs.py                        # submit pending rows
+$M experiments/qwen3_mmlu/run_jobs.py --collect              # manifest of finished rows
+/home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/summarize_rounding.py --manifest <artifacts>/rounding-quantile-sweep.json
+```
+
+The launcher refuses uncommitted tracked changes in this directory, skips rows
+with a done marker (unless `--force`) or an identical queued/running job, and
+stages `experiments/qwen3_mmlu` once per commit under `<artifacts>/staging/`.
+Smoke runs (`--limit`) use `jobs-smoke/` instead of `jobs/`.
+
+### Thresholds and counters
 
 The interval is inclusive: nonzero finite values with `abs(x) <= epsilon` become
 zero. Existing zeros are counted separately. Epsilon zero is an exact no-op.
@@ -139,3 +174,5 @@ per-layer thresholds.
   sweep resume and `--detach`. Extended the MLP sweep with 1e-1 and set block to
   1e-2 and 1e-1.
 - 2026-09-28: Completed mlp 1e-1 and block 1e-2/1e-1; recorded full results.
+- 2026-09-28: Added per-token quantile zeroing and an MLSpace job launcher for
+  {mlp, block} x {q = 0.25, 0.5}; live checks pass for mlp and block at q = 0.5.

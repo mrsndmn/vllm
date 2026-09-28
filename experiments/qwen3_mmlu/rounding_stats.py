@@ -23,30 +23,46 @@ def validate_eps(value):
     return value
 
 
-def threshold(values, eps, residual=None):
+def validate_quantile(value):
+    value = float(value)
+    if not math.isfinite(value) or not 0 <= value < 1:
+        raise ValueError("round_activations_quantile must be in [0, 1)")
+    return value
+
+
+def threshold(values, eps, residual=None, quantile=0.0):
     """Modify selected values in place; return per-token int64 counters.
 
     ``values`` has one row per token, including all selected experts for MLPs.
     Residual sums are tested in FP32, as in vLLM's fused add/RMSNorm. Keeping
     both original operands outside the mask preserves the fused arithmetic.
-    Epsilon zero is an exact no-op, including signed zeros and NaNs.
+    A nonzero ``quantile`` q replaces ``eps`` with a per-row cutoff: the row's
+    floor(q * width)-th smallest magnitude; ties at the cutoff are zeroed too.
+    Epsilon and quantile zero are an exact no-op, including signed zeros and NaNs.
     """
     observed = values.float()
     if residual is not None:
         observed = observed + residual.float()
     zero = observed == 0
-    mask = (
-        (observed.abs() <= min(eps, torch.finfo(torch.float32).max))
-        & ~zero
-        & torch.isfinite(observed)
-        if eps
-        else torch.zeros_like(zero)
-    )
-    if eps:
+    width = values.shape[1]
+    rank = math.floor(quantile * width)
+    if rank and values.shape[0]:
+        magnitude = observed.abs()
+        cutoff = magnitude.kthvalue(rank, dim=1, keepdim=True).values
+        # kthvalue ranks NaN last, so a NaN cutoff means every finite value is below it.
+        limit = torch.where(cutoff.isnan(), torch.inf, cutoff)
+    elif eps:
+        magnitude = observed.abs()
+        limit = min(eps, torch.finfo(torch.float32).max)
+    else:
+        limit = None
+    if limit is None:
+        mask = torch.zeros_like(zero)
+    else:
+        mask = (magnitude <= limit) & ~zero & torch.isfinite(observed)
         values.masked_fill_(mask, 0)
         if residual is not None:
             residual.masked_fill_(mask, 0)
-    width = values.shape[1]
     changed = mask.sum(dim=1, dtype=torch.int64)
     existing = zero.sum(dim=1, dtype=torch.int64)
     return torch.stack(
@@ -85,7 +101,7 @@ def format_layers(counts):
     return layers
 
 
-def read_stats(path, site, eps, response_id=None):
+def read_stats(path, site, eps, response_id=None, quantile=0.0):
     with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30) as db:
         sql = "SELECT counts, skipped FROM requests"
         params = ()
@@ -106,6 +122,7 @@ def read_stats(path, site, eps, response_id=None):
     return {
         "site": site,
         "epsilon": eps,
+        "quantile": quantile,
         "coverage": "executed token positions; cached prefixes excluded; "
         "recomputed positions counted again; last sampled token is not forwarded",
         "engine_sequences": requests,

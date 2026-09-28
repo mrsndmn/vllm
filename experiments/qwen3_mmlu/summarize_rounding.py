@@ -51,9 +51,10 @@ def summarize_entry(entry):
     layers = format_layers(counts)
     totals = [sum(row[i] for row in counts) for i in range(len(FIELDS))]
     row = {
-        "experiment": f"{entry['site']}_eps_{entry['epsilon']:g}",
+        "experiment": entry.get("name") or f"{entry['site']}_eps_{entry['epsilon']:g}",
         "site": entry["site"],
         "epsilon": entry["epsilon"],
+        "quantile": entry.get("quantile", 0.0),
         "mmlu_percent": 100 * accuracy,
         "correct": correct,
         "questions": questions,

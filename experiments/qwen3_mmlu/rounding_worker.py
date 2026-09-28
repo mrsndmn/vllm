@@ -7,7 +7,13 @@ import re
 
 import numpy as np
 import torch
-from rounding_stats import FIELDS, connect, threshold, validate_eps
+from rounding_stats import (
+    FIELDS,
+    connect,
+    threshold,
+    validate_eps,
+    validate_quantile,
+)
 
 from vllm.v1.worker.gpu_worker import Worker
 
@@ -34,6 +40,11 @@ class RoundingWorker(Worker):
         ):
             raise ValueError("Rounding requires eager, unquantized, single-GPU V1")
         self.eps = validate_eps(os.environ["ROUND_ACTIVATIONS_EPS"])
+        self.quantile = validate_quantile(
+            os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0")
+        )
+        if self.eps and self.quantile:
+            raise ValueError("Use either an epsilon or a quantile, not both")
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
         self.active_counts = {}
@@ -104,7 +115,7 @@ class RoundingWorker(Worker):
         runner.execute_model = execute_model
 
     def record(self, layer, values, residual=None):
-        counts = threshold(values, self.eps, residual)
+        counts = threshold(values, self.eps, residual, self.quantile)
         if self.executing:
             expected = sum(self.batch_sizes)
             if counts.shape[0] != expected or layer in self.layer_counts:

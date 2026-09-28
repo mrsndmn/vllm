@@ -3,6 +3,7 @@
 import argparse
 import concurrent.futures
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -27,20 +28,29 @@ def signature(response):
     return [(choice["text"], choice.get("logprobs")) for choice in response["choices"]]
 
 
+def zeroing(config):
+    return config["epsilon"] > 0 or config.get("quantile", 0) > 0
+
+
 def check_counts(response, config):
     stats = response["rounding_statistics"]
     layers = stats["layers"]
     assert len(layers) == 48, stats
     width = 6144 if config["site"] == "mlp" else 2048
+    quantile = config.get("quantile", 0)
     assert len({layer["tokens"] for layer in layers}) == 1
     for layer in layers:
         assert layer["tokens"] > 0
         assert layer["floats"] == layer["tokens"] * width
         assert 0 <= layer["newly_zeroed_floats"] <= layer["floats"]
         assert 0 <= layer["affected_tokens"] <= layer["tokens"]
-        if config["epsilon"] == 0:
+        if not zeroing(config):
             assert layer["newly_zeroed_floats"] == 0
-    if config["epsilon"] > 0:
+        if quantile:
+            zero = layer["newly_zeroed_floats"] + layer["already_zero_floats"]
+            assert zero >= math.floor(quantile * width) * layer["tokens"], layer
+            assert layer["newly_zeroed_floats"] <= (quantile + 0.01) * layer["floats"]
+    if zeroing(config):
         assert sum(layer["newly_zeroed_floats"] for layer in layers) > 0
 
 
@@ -71,7 +81,7 @@ def main():
     config = get_json("/rounding/config")
     for response in responses:
         check_counts(response, config)
-    if config["epsilon"] == 0:
+    if not zeroing(config):
         original = json.loads(REFERENCE.read_text())
         assert [signature(r) for r in original] == [signature(r) for r in responses]
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -117,7 +127,8 @@ def main():
         "chat": chat,
         "stream_statistics": json.loads(events[-2]),
     }
-    path = ARTIFACTS / f"validation-{config['site']}-{config['epsilon']}.json"
+    strength = f"q{config['quantile']}" if config.get("quantile") else config["epsilon"]
+    path = ARTIFACTS / f"validation-{config['site']}-{strength}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"Live checks passed: {path}")
 

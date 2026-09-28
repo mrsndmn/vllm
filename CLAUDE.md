@@ -20,6 +20,16 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   resumes by skipping configurations already recorded in its manifest.
 - `experiments/qwen3_mmlu/run.py sweep --detach`: same sweep in the detached
   tmux session `vllm-qwen3-30b-a3b-sweep`, logging to `rounding-sweep.log`.
+  `sweep` runs only local rows (rows without `launcher="mls"`).
+- `experiments/qwen3_mmlu/run.py restart --round-activations-quantile 0.5
+  --round-activations-site mlp`: per-token quantile zeroing (exclusive with eps).
+- `experiments/qwen3_mmlu/run.py job --name <row> [--limit N]`: MLSpace container
+  entry point; serves one `launcher="mls"` registry row as a subprocess (no tmux),
+  evaluates, stops the server, and writes `jobs[-smoke]/<row>/done.json` last.
+- `/home/jovyan/.mlspace/envs/arkhip/bin/python
+  experiments/qwen3_mmlu/run_jobs.py [--dry] [--filter S] [--limit N] [--force]`:
+  submits one `a100.1gpu` job per pending quantile row; `--collect` writes
+  `rounding-quantile-sweep.json` for `summarize_rounding.py`.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
@@ -44,5 +54,8 @@ recomputed positions. Each server startup gets a separate database. The wrapper
 assigns unique request IDs to prevent statistics collisions.
 
 Configuration lives in the script's `experiment_configs`; lifecycle instructions
-and results live in `experiments/qwen3_mmlu/README.md`. Artifacts are outside the
-checkout. No MLS jobs are used for this experiment.
+and results live in `experiments/qwen3_mmlu/README.md` and `ROUNDING.md`.
+Artifacts are outside the checkout. Fixed-epsilon rows run locally; quantile rows
+run as MLSpace jobs from a per-commit snapshot of `experiments/qwen3_mmlu`, using
+`/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126` (`~/.mlspace` is not mounted
+in job containers). Domain terms are in `CONTEXT.md`; decisions in `docs/adr/`.

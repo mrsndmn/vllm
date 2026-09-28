@@ -14,10 +14,11 @@ class RoundingMiddleware:
         self.path = os.environ["ROUND_ACTIVATIONS_DB"]
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
         self.eps = float(os.environ["ROUND_ACTIVATIONS_EPS"])
+        self.quantile = float(os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0"))
 
     async def stats(self, response_id=None):
         return await asyncio.to_thread(
-            read_stats, self.path, self.site, self.eps, response_id
+            read_stats, self.path, self.site, self.eps, response_id, self.quantile
         )
 
     async def __call__(self, scope, receive, send):
@@ -28,7 +29,12 @@ class RoundingMiddleware:
             if path.endswith("stats"):
                 result = await self.stats()
             else:
-                result = {"site": self.site, "epsilon": self.eps, "database": self.path}
+                result = {
+                    "site": self.site,
+                    "epsilon": self.eps,
+                    "quantile": self.quantile,
+                    "database": self.path,
+                }
             body = json.dumps(result).encode()
             await send(
                 {

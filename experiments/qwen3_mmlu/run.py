@@ -2,8 +2,10 @@
 
 import argparse
 import json
+import math
 import os
 import shlex
+import signal
 import socket
 import subprocess
 import time
@@ -41,21 +43,39 @@ experiment_configs = [
     )
     for eps in epsilons
 ]
+# MLSpace job containers do not mount ~/.mlspace; this path is the same env.
+JOB_PYTHON = "/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126/bin/python"
+# Quantile zeroing runs as MLSpace jobs (run_jobs.py); fixed-eps rows run locally.
+experiment_configs += [
+    dict(
+        BASE_CONFIG,
+        name=f"{site}_q{quantile:g}",
+        launcher="mls",
+        instance_type="a100.1gpu",
+        python=JOB_PYTHON,
+        round_activations_site=site,
+        round_activations_eps=0.0,
+        round_activations_quantile=quantile,
+    )
+    for site in ("mlp", "block")
+    for quantile in (0.25, 0.5)
+]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
 
 
 def session_exists(session=None):
-    return (
-        subprocess.run(
+    try:
+        result = subprocess.run(
             # "=" disables tmux prefix matching (the sweep session shares a prefix).
             ["tmux", "has-session", "-t", "=" + (session or CONFIG["session"])],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-        ).returncode
-        == 0
-    )
+        )
+    except FileNotFoundError:  # MLSpace containers may lack tmux.
+        return False
+    return result.returncode == 0
 
 
 def environment():
@@ -73,7 +93,7 @@ def environment():
     return env
 
 
-def serve():
+def server_command(database):
     command = [
         CONFIG["python"],
         "-m",
@@ -103,13 +123,17 @@ def serve():
         "--disable-log-requests",
     ]
     if "round_activations_eps" in CONFIG:
-        database = ARTIFACTS / "rounding" / f"{uuid.uuid4().hex}.sqlite"
         command[1:3] = [
             str(SCRIPT.with_name("rounding_server.py")),
             *rounding_args(),
             "--rounding-db",
             str(database),
         ]
+    return command
+
+
+def serve():
+    command = server_command(ARTIFACTS / "rounding" / f"{uuid.uuid4().hex}.sqlite")
     os.chdir(ARTIFACTS)
     with (ARTIFACTS / "server.log").open("a", buffering=1) as log:
         os.dup2(log.fileno(), 1)
@@ -176,12 +200,26 @@ def status():
 def rounding_args():
     if "round_activations_eps" not in CONFIG:
         return []
-    return [
+    args = [
         "--round-activations-eps",
         str(CONFIG["round_activations_eps"]),
         "--round-activations-site",
         CONFIG["round_activations_site"],
     ]
+    if "round_activations_quantile" in CONFIG:
+        args += [
+            "--round-activations-quantile",
+            str(CONFIG["round_activations_quantile"]),
+        ]
+    return args
+
+
+def config_mismatch(actual):
+    return actual is None or (
+        actual["epsilon"] != CONFIG["round_activations_eps"]
+        or actual["site"] != CONFIG["round_activations_site"]
+        or actual.get("quantile", 0.0) != CONFIG.get("round_activations_quantile", 0.0)
+    )
 
 
 def get_json(path):
@@ -189,17 +227,13 @@ def get_json(path):
         return json.load(response)
 
 
-def wait_ready():
+def wait_ready(alive=session_exists):
     for _ in range(600):
-        if not session_exists():
+        if not alive():
             raise RuntimeError("Server exited; inspect server.log")
         try:
             get_json("/v1/models")
-            actual = get_json("/rounding/config")
-            if (
-                actual["epsilon"] != CONFIG["round_activations_eps"]
-                or actual["site"] != CONFIG["round_activations_site"]
-            ):
+            if config_mismatch(get_json("/rounding/config")):
                 raise RuntimeError("Rounding server configuration mismatch")
             return
         except (OSError, urllib.error.URLError):
@@ -207,9 +241,11 @@ def wait_ready():
     raise RuntimeError("Server not ready within startup timeout")
 
 
-def evaluate(limit):
+def evaluate(limit, output=None, workdir=None):
     status()
-    output = ARTIFACTS / ("smoke" if limit else "mmlu") / time.strftime("%Y%m%d-%H%M%S")
+    if output is None:
+        output = ARTIFACTS / ("smoke" if limit else "mmlu")
+        output /= time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
     actual = None
     try:
@@ -217,11 +253,7 @@ def evaluate(limit):
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
-    if "round_activations_eps" in CONFIG and (
-        actual is None
-        or actual["epsilon"] != CONFIG["round_activations_eps"]
-        or actual["site"] != CONFIG["round_activations_site"]
-    ):
+    if "round_activations_eps" in CONFIG and config_mismatch(actual):
         raise RuntimeError("Evaluation configuration differs from running server")
     if actual:
         (output / "rounding-config.json").write_text(json.dumps(actual, indent=2))
@@ -269,7 +301,7 @@ def evaluate(limit):
     (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
     print(f"Results: {output}", flush=True)
     # The harness treats a local directory named "mmlu" as a task definition.
-    workdir = ARTIFACTS / "runtime"
+    workdir = workdir or ARTIFACTS / "runtime"
     workdir.mkdir(exist_ok=True)
     subprocess.run(command, cwd=workdir, env=env, check=True)
     if actual:
@@ -283,6 +315,7 @@ def sweep(limit):
     manifest = ARTIFACTS / ("rounding-smoke.json" if limit else "rounding-sweep.json")
     # Resume: configurations already recorded for this limit are not rerun.
     results = json.loads(manifest.read_text()) if manifest.exists() else []
+    local = [c for c in experiment_configs if c.get("launcher") != "mls"]
     completed = []
     for entry in results:
         stored = json.loads((Path(entry["output"]) / "experiment.json").read_text())
@@ -291,7 +324,7 @@ def sweep(limit):
                 f"{manifest} records an unconfigured run: {entry['output']}"
             )
         completed.append(stored)
-    for config in experiment_configs:
+    for config in local:
         if config in completed:
             continue
         CONFIG.clear()
@@ -311,7 +344,7 @@ def sweep(limit):
         completed.append(config)
         manifest.write_text(json.dumps(results, indent=2) + "\n")
         print(
-            f"Completed {len(completed)}/{len(experiment_configs)}: {output}",
+            f"Completed {len(completed)}/{len(local)}: {output}",
             flush=True,
         )
     print(f"Sweep complete: {manifest}", flush=True)
@@ -342,6 +375,53 @@ def launch_sweep(limit):
     print(f"Started {session}; see {log}")
 
 
+def job_root(name, limit):
+    return ARTIFACTS / ("jobs-smoke" if limit else "jobs") / name
+
+
+def job(name, limit):
+    """MLSpace container entry point: serve one registry row, evaluate, stop."""
+    matches = [c for c in experiment_configs if c.get("name") == name]
+    if len(matches) != 1:
+        raise RuntimeError(f"Expected one experiment named {name!r}")
+    CONFIG.clear()
+    CONFIG.update(matches[0])
+    root = job_root(name, limit)
+    attempt = root / time.strftime("%Y%m%d-%H%M%S")
+    attempt.mkdir(parents=True)
+    env = environment()
+    if CONFIG["offline_evaluation"]:
+        env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
+    with (attempt / "server.log").open("w") as log:
+        server = subprocess.Popen(
+            server_command(attempt / "rounding.sqlite"),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            cwd=attempt,
+            env=env,
+        )
+        try:
+            wait_ready(lambda: server.poll() is None)
+            output = evaluate(limit, attempt / "mmlu", attempt / "runtime")
+        finally:
+            server.send_signal(signal.SIGINT)
+            try:
+                server.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait()
+    # Written last: run_jobs.py treats this marker as the completed result.
+    marker = {
+        "name": name,
+        "site": CONFIG["round_activations_site"],
+        "epsilon": CONFIG["round_activations_eps"],
+        "quantile": CONFIG["round_activations_quantile"],
+        "output": str(output),
+    } | ({"limit": limit} if limit else {})
+    (root / "done.json").write_text(json.dumps(marker, indent=2) + "\n")
+    print(f"Job complete: {root / 'done.json'}", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -354,6 +434,7 @@ def main():
             "serve",
             "eval",
             "sweep",
+            "job",
         ],
     )
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
@@ -361,8 +442,12 @@ def main():
         "--round-activations-eps", "--round_activations_eps", type=float
     )
     parser.add_argument(
+        "--round-activations-quantile", "--round_activations_quantile", type=float
+    )
+    parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], default="mlp"
     )
+    parser.add_argument("--name", help="Registry experiment name for job")
     parser.add_argument(
         "--detach", action="store_true", help="Run sweep in a tmux session"
     )
@@ -371,18 +456,24 @@ def main():
         parser.error("--limit must be positive")
     if args.detach and args.action != "sweep":
         parser.error("--detach only applies to sweep")
-    if args.round_activations_eps is not None:
-        import math
-
-        if (
-            not math.isfinite(args.round_activations_eps)
-            or args.round_activations_eps < 0
-        ):
-            parser.error("epsilon must be finite and nonnegative")
+    eps, quantile = args.round_activations_eps, args.round_activations_quantile
+    if (args.action == "job") != (args.name is not None):
+        parser.error("--name is required for job and only applies to it")
+    if args.action == "job" and (eps is not None or quantile is not None):
+        parser.error("job takes its zeroing settings from the registry")
+    if eps is not None and (not math.isfinite(eps) or eps < 0):
+        parser.error("epsilon must be finite and nonnegative")
+    if quantile is not None and not (math.isfinite(quantile) and 0 <= quantile < 1):
+        parser.error("quantile must be in [0, 1)")
+    if eps and quantile:
+        parser.error("use either an epsilon or a quantile, not both")
+    if eps is not None or quantile is not None:
         CONFIG.update(
-            round_activations_eps=args.round_activations_eps,
+            round_activations_eps=eps or 0.0,
             round_activations_site=args.round_activations_site,
         )
+        if quantile is not None:
+            CONFIG["round_activations_quantile"] = quantile
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     if args.action == "restart":
         stop()
@@ -393,6 +484,8 @@ def main():
         launch_sweep(args.limit)
     elif args.action == "sweep":
         sweep(args.limit)
+    elif args.action == "job":
+        job(args.name, args.limit)
     else:
         globals()[args.action]()
 
