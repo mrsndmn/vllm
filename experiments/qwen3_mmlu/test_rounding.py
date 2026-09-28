@@ -4,6 +4,7 @@ import asyncio
 import json
 import subprocess
 
+import chat_eval
 import pytest
 import run_jobs
 import torch
@@ -260,7 +261,7 @@ def test_invalid_quantile_is_rejected(value):
 
 
 def test_registry_keeps_fixed_eps_rows_and_adds_named_quantile_jobs():
-    jobs = run_jobs.job_configs()
+    jobs = [c for c in run_jobs.job_configs() if c["task"] == "mmlu"]
     assert [c["name"] for c in jobs] == [
         "mlp_q0.25",
         "mlp_q0.5",
@@ -358,7 +359,8 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
     (done / "done.json").write_text("{}")
     assert run_jobs.launch(launch_args(dry=True)) == [] and submitted == []
     launched = run_jobs.launch(launch_args())
-    assert [job["name"] for job in launched] == ["mlp_q0.5", "block_q0.25"]
+    chat = [c["name"] for c in run_jobs.job_configs() if c["task"] != "mmlu"]
+    assert [job["name"] for job in launched] == ["mlp_q0.5", "block_q0.25", *chat]
     body = submitted[0]
     assert body["instance_type"] == "a100.1gpu" and body["region"] == "SR004"
     workdir = tmp_path / "staging" / "abc123" / run_jobs.SUBDIR
@@ -370,6 +372,10 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
     assert "smoke1" in smoke[0]["desc"]
     forced = run_jobs.launch(launch_args(filter="mlp_q0.25", force=True))
     assert [job["name"] for job in forced] == ["mlp_q0.25"]
+    assert [c["name"] for c in run_jobs.job_configs("chat_*_q0.5")] == [
+        "chat_mlp_q0.5",
+        "chat_block_q0.5",
+    ]
 
 
 def test_launcher_refuses_dirty_experiment_tree(monkeypatch):
@@ -408,3 +414,206 @@ def test_summary_reports_total_zero_share_and_rejects_empty_manifest(
     monkeypatch.setattr("sys.argv", ["summarize", "--manifest", str(manifest)])
     with pytest.raises(SystemExit, match="No completed runs"):
         summarize_rounding.main()
+
+
+@pytest.mark.parametrize(
+    ("text", "letter"),
+    [
+        ("Short reasoning.\nAnswer: B", "B"),
+        ("**Answer:** (C)", "C"),
+        ("Answer: A is tempting.\nFinal answer: D", "D"),
+        ("answer: a simple case, so Answer: C.", "C"),
+        ("The answer depends on B.", None),
+    ],
+)
+def test_final_answer_takes_last_answer_line(text, letter):
+    assert chat_eval.final_answer(text) == letter
+
+
+@pytest.mark.parametrize(
+    ("text", "letter"), [(" B", "B"), (" **C**", "C"), (" (A)", "A"), (" The", None)]
+)
+def test_forced_answer_reads_leading_letter(text, letter):
+    assert chat_eval.forced_answer(text) == letter
+
+
+def fake_post(first_text, finish, forced=" B"):
+    calls = []
+
+    def post(body):
+        calls.append(body)
+        text, reason = (first_text, finish) if len(calls) == 1 else (forced, "length")
+        return {
+            "choices": [{"text": text, "finish_reason": reason}],
+            "usage": {"completion_tokens": 7},
+        }
+
+    return post, calls
+
+
+CHAT = dict(run.CHAT_CONFIG)
+QUESTION = {
+    "subject": "s",
+    "index": 3,
+    "question": "Q",
+    "choices": list("wxyz"),
+    "answer": "B",
+}
+
+
+def test_chat_answer_natural_and_forced_modes():
+    post, calls = fake_post("Reason.\nAnswer: B", "stop")
+    record = chat_eval.answer(QUESTION, "<p>", post, CHAT)
+    assert (record["mode"], record["prediction"], record["correct"]) == (
+        "natural",
+        "B",
+        True,
+    )
+    assert len(calls) == 1 and calls[0]["max_tokens"] == 1024
+    assert calls[0]["temperature"] == 0 and calls[0]["prompt"] == "<p>"
+    post, calls = fake_post("Reasoning that ran out", "length", forced=" **B**")
+    record = chat_eval.answer(QUESTION, "<p>", post, CHAT)
+    assert record["mode"] == "forced_cap" and record["prediction"] == "B"
+    assert calls[1]["prompt"] == (
+        "<p>Reasoning that ran out\n\n[reasoning interrupted] Answer:"
+    )
+    assert calls[1]["max_tokens"] == 5
+    post, calls = fake_post("Answer: C but more text follows", "length")
+    assert chat_eval.answer(QUESTION, "<p>", post, CHAT)["mode"] == "forced_cap"
+    post, calls = fake_post("No letter given.", "stop", forced=" I think")
+    record = chat_eval.answer(QUESTION, "<p>", post, CHAT)
+    assert record["mode"] == "forced_missing"
+    assert calls[1]["prompt"].endswith("No letter given.\n\nAnswer:")
+    assert record["prediction"] is None and record["correct"] is False
+
+
+def test_chat_prompt_uses_template_without_thinking():
+    seen = {}
+
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            seen.update(messages=messages, **kwargs)
+            return "templated"
+
+    assert chat_eval.chat_prompt(Tokenizer(), QUESTION) == "templated"
+    content = seen["messages"][0]["content"]
+    assert seen["enable_thinking"] is False and seen["add_generation_prompt"]
+    assert "keep your reasoning short" in content and "\nA) w\nB) x" in content
+
+
+def test_question_sample_is_seeded_per_subject():
+    data = {
+        f"s{i}": [
+            {"question": f"q{i}-{j} ", "choices": [1, 2, 3, 4], "answer": j % 4}
+            for j in range(40)
+        ]
+        for i in range(3)
+    }
+    config = dict(CHAT, chat_subjects=["s0", "s1", "s2"])
+    first = chat_eval.select_questions(config, 5, data.__getitem__)
+    again = chat_eval.select_questions(
+        dict(config, chat_subjects=["s2", "s0", "s1"]), 5, data.__getitem__
+    )
+    assert len(first) == 15 and sorted(map(str, first)) == sorted(map(str, again))
+    for row in first:
+        assert row["question"] == f"q{row['subject'][1]}-{row['index']}"
+        assert row["answer"] == "ABCD"[row["index"] % 4]
+    other = chat_eval.select_questions(dict(config, chat_seed=1), 5, data.__getitem__)
+    assert [r["index"] for r in other] != [r["index"] for r in first]
+
+
+def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
+    chat = [c for c in run.experiment_configs if c.get("task") == "mmlu_stem_chat"]
+    assert [c["name"] for c in chat] == [
+        "chat_baseline",
+        "chat_mlp_q0.25",
+        "chat_mlp_q0.5",
+        "chat_block_q0.25",
+        "chat_block_q0.5",
+    ]
+    for config in chat:
+        assert len(config["chat_subjects"]) * config["chat_per_subject"] == 304
+        assert config["launcher"] == "mls" and config["max_num_seqs"] == 16
+    assert chat[0]["round_activations_quantile"] == 0
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(run_jobs, "MANIFEST", tmp_path / "manifest.json")
+    for name in ("mlp_q0.5", "chat_mlp_q0.5"):
+        run.job_root(name, None).mkdir(parents=True)
+        (run.job_root(name, None) / "done.json").write_text(json.dumps({"n": name}))
+    run_jobs.collect()
+    assert json.loads((tmp_path / "manifest.json").read_text()) == [{"n": "mlp_q0.5"}]
+
+
+def test_evaluate_routes_chat_rows_to_chat_eval(tmp_path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
+    run.select("chat_block_q0.5")
+    served = {"site": "block", "epsilon": 0.0, "quantile": 0.5}
+    monkeypatch.setattr(run, "status", lambda: None)
+    monkeypatch.setattr(
+        run, "get_json", lambda path: served if "config" in path else {"layers": []}
+    )
+    monkeypatch.setattr(
+        run.subprocess, "run", lambda command, **kwargs: commands.append(command)
+    )
+    output = run.evaluate(2, tmp_path / "out", tmp_path / "runtime")
+    command = commands[0]
+    assert command[:3] == [
+        run.JOB_PYTHON,
+        str(run.SCRIPT.with_name("chat_eval.py")),
+        "run",
+    ]
+    assert command[command.index("--limit") + 1] == "2"
+    stored = json.loads((output / "experiment.json").read_text())
+    assert stored["name"] == "chat_block_q0.5"
+    assert (output / "rounding-after.json").exists()
+
+
+def write_chat_run(root, name, predictions):
+    output = root / "jobs" / name / "attempt" / "mmlu"
+    output.mkdir(parents=True)
+    records = [
+        {
+            "subject": subject,
+            "index": 0,
+            "answer": "A",
+            "prediction": prediction,
+            "correct": prediction == "A",
+            "mode": "natural",
+            "reasoning_tokens": 5,
+        }
+        for subject, prediction in zip(("s0", "s1"), predictions)
+    ]
+    lines = "".join(json.dumps(record) + "\n" for record in records)
+    (output / "samples.jsonl").write_text(lines)
+    config = dict(CHAT, chat_subjects=["s0", "s1"])
+    summary = chat_eval.summarize_records(records, config)
+    (output / "results.json").write_text(json.dumps(summary))
+    layer = {"floats": 100, "newly_zeroed_floats": 50, "already_zero_floats": 1}
+    (output / "rounding-before.json").write_text(json.dumps({"layers": []}))
+    (output / "rounding-after.json").write_text(json.dumps({"layers": [layer]}))
+    marker = root / "jobs" / name / "done.json"
+    marker.write_text(json.dumps({"output": str(output)}))
+
+
+def test_chat_summary_validates_runs_and_counts_changes(tmp_path, monkeypatch):
+    small = [
+        dict(c, chat_subjects=["s0", "s1"], chat_per_subject=1)
+        for c in run.experiment_configs
+        if c.get("task") == "mmlu_stem_chat"
+    ]
+    monkeypatch.setattr(run, "experiment_configs", small)
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    write_chat_run(tmp_path, "chat_baseline", ["A", "A"])
+    write_chat_run(tmp_path, "chat_block_q0.5", ["A", None])
+    rows = {row["experiment"]: row for row in chat_eval.summarize()}
+    assert rows["chat_baseline"]["accuracy_percent"] == 100
+    worse = rows["chat_block_q0.5"]
+    assert worse["accuracy_percent"] == 50 and worse["unparsed"] == 1
+    assert (worse["changed_vs_baseline"], worse["broken_vs_baseline"]) == (1, 1)
+    assert worse["min_layer_total_zero_percent"] == 51
+    assert (tmp_path / "rounding-chat-sweep-summary.csv").exists()
+    write_chat_run(tmp_path, "chat_mlp_q0.5", ["A"])
+    with pytest.raises(AssertionError):
+        chat_eval.summarize()

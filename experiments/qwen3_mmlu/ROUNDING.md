@@ -68,6 +68,28 @@ Smoke runs (`--limit N`) use `jobs-smoke/limitN/` instead of `jobs/`.
 Summaries report both the newly zeroed share and the total zero share (newly
 zeroed plus already zero); quantile zeroing guarantees the latter is at least q.
 
+### Generative chat check (MLSpace jobs)
+
+Rows with `task="mmlu_stem_chat"` test whether zeroing is safe for the deployed
+chat model. `chat_eval.py` samples 16 test questions per MMLU STEM subject (19
+subjects, 304 questions, fixed seed) and asks each zero-shot through the model's
+chat template. The prompt asks for short step-by-step reasoning ending with
+`Answer: $LETTER`. Decoding is greedy with at most 1024 reasoning tokens. A
+response that hits the cap is continued in the same assistant turn with
+`[reasoning interrupted] Answer:` and at most 5 tokens; a finished response
+without an answer line gets `Answer:` the same way. The letter is parsed from
+the last `Answer:` line or from the forced continuation; unparsed answers count
+as wrong. Qwen3-30B-A3B-Instruct-2507 has no thinking mode (its chat template
+has none); `enable_thinking=False` is passed anyway. `chat_baseline` serves the
+wrapper with nothing zeroed so the four quantile arms share its protocol.
+
+```bash
+$M experiments/qwen3_mmlu/run_jobs.py --filter 'chat_*' --dry
+$M experiments/qwen3_mmlu/run_jobs.py --filter chat_baseline --limit 1   # smoke
+$M experiments/qwen3_mmlu/run_jobs.py --filter 'chat_*'
+/home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/chat_eval.py summarize
+```
+
 ### Thresholds and counters
 
 The interval is inclusive: nonzero finite values with `abs(x) <= epsilon` become
@@ -199,6 +221,8 @@ and consider an MLSpace baseline job if job-to-local drift matters.
 - 2026-09-28: Completed mlp 1e-1 and block 1e-2/1e-1; recorded full results.
 - 2026-09-28: Added per-token quantile zeroing and an MLSpace job launcher for
   {mlp, block} x {q = 0.25, 0.5}; live checks pass for mlp and block at q = 0.5.
+- 2026-09-28: Added the generative chat-template STEM check (`chat_eval.py`) for
+  the unzeroed baseline and the four quantile arms.
 - 2026-09-28: Quantile sweep completed on MLSpace (a100.1gpu): mlp_q0.25
   lm-mpi-job-bc26f81b-4ca3-483b-b6b3-74dcea4b39c9, mlp_q0.5
   lm-mpi-job-8954aff6-caa6-4b87-8622-573832c2fb1f, block_q0.25

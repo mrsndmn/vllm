@@ -29,8 +29,16 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   (`jobs-smoke/limitN/<row>/` for smoke runs).
 - `/home/jovyan/.mlspace/envs/arkhip/bin/python
   experiments/qwen3_mmlu/run_jobs.py [--dry] [--filter S] [--limit N] [--force]`:
-  submits one `a100.1gpu` job per pending quantile row; `--collect` writes
-  `rounding-quantile-sweep.json` for `summarize_rounding.py`.
+  submits one `a100.1gpu` job per pending row (`--filter` is a name glob, e.g.
+  `'chat_*'`); `--collect` writes `rounding-quantile-sweep.json` (harness rows
+  only) for `summarize_rounding.py`.
+- `experiments/qwen3_mmlu/run.py eval --name chat_baseline [--limit N]`: evaluate
+  one registry row against the running server (it must serve the same zeroing).
+  Rows with `task="mmlu_stem_chat"` run `chat_eval.py run` instead of the harness:
+  chat template, 304 seeded STEM questions, greedy reasoning capped at 1024 tokens,
+  then a forced `[reasoning interrupted] Answer:` letter if needed.
+- `experiments/qwen3_mmlu/chat_eval.py summarize`: validate finished chat jobs and
+  write `rounding-chat-sweep-summary.csv` with answer changes vs `chat_baseline`.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous

@@ -6,6 +6,7 @@ Run with the environment that provides the shared `mls` client, e.g.
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -31,7 +32,7 @@ def job_configs(pattern=None):
         config
         for config in run.experiment_configs
         if config.get("launcher") == "mls"
-        and (not pattern or pattern in config["name"])
+        and (not pattern or fnmatch.fnmatchcase(config["name"], pattern))
     ]
 
 
@@ -118,11 +119,14 @@ def collect():
     """Write a summarize_rounding.py manifest from completed full-run markers."""
     entries = []
     for config in job_configs():
+        if config["task"] != "mmlu":  # chat rows: chat_eval.py summarize
+            continue
         marker = run.job_root(config["name"], None) / "done.json"
         if marker.exists():
             entries.append(json.loads(marker.read_text()))
     MANIFEST.write_text(json.dumps(entries, indent=2) + "\n")
-    print(f"{len(entries)}/{len(job_configs())} completed: {MANIFEST}")
+    total = sum(config["task"] == "mmlu" for config in job_configs())
+    print(f"{len(entries)}/{total} completed: {MANIFEST}")
 
 
 def launch(args):
@@ -162,7 +166,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry", action="store_true", help="Print; submit nothing")
     parser.add_argument("--force", action="store_true", help="Ignore done markers")
-    parser.add_argument("--filter", help="Substring of experiment names")
+    parser.add_argument("--filter", help="Glob over experiment names, e.g. 'chat_*'")
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
     parser.add_argument(
         "--collect", action="store_true", help="Write the completed-runs manifest"

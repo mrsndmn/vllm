@@ -60,6 +60,59 @@ experiment_configs += [
     for site in ("mlp", "block")
     for quantile in (0.25, 0.5)
 ]
+# Generative chat-format check on a seeded MMLU STEM subset (chat_eval.py).
+STEM_SUBJECTS = [
+    "abstract_algebra",
+    "anatomy",
+    "astronomy",
+    "college_biology",
+    "college_chemistry",
+    "college_computer_science",
+    "college_mathematics",
+    "college_physics",
+    "computer_security",
+    "conceptual_physics",
+    "electrical_engineering",
+    "elementary_mathematics",
+    "high_school_biology",
+    "high_school_chemistry",
+    "high_school_computer_science",
+    "high_school_mathematics",
+    "high_school_physics",
+    "high_school_statistics",
+    "machine_learning",
+]
+CHAT_CONFIG = dict(
+    BASE_CONFIG,
+    launcher="mls",
+    instance_type="a100.1gpu",
+    python=JOB_PYTHON,
+    task="mmlu_stem_chat",
+    fewshot=0,
+    max_num_seqs=16,
+    chat_subjects=STEM_SUBJECTS,
+    chat_per_subject=16,
+    chat_seed=0,
+    chat_max_reasoning_tokens=1024,
+    chat_max_answer_tokens=5,
+    chat_concurrency=16,
+)
+experiment_configs += [
+    dict(
+        CHAT_CONFIG,
+        name="chat_baseline" if quantile == 0 else f"chat_{site}_q{quantile:g}",
+        round_activations_site=site,
+        round_activations_eps=0.0,
+        round_activations_quantile=quantile,
+    )
+    for site, quantile in (
+        ("mlp", 0.0),
+        ("mlp", 0.25),
+        ("mlp", 0.5),
+        ("block", 0.25),
+        ("block", 0.5),
+    )
+]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
@@ -260,6 +313,40 @@ def evaluate(limit, output=None, workdir=None):
         (output / "rounding-before.json").write_text(
             json.dumps(get_json("/rounding/stats"), indent=2)
         )
+    if CONFIG["task"] == "mmlu_stem_chat":
+        command = [
+            CONFIG["python"],
+            str(SCRIPT.with_name("chat_eval.py")),
+            "run",
+            "--config",
+            str(output / "experiment.json"),
+            "--output",
+            str(output),
+            "--url",
+            URL,
+        ]
+        if limit:
+            command += ["--limit", str(limit)]
+    else:
+        command = harness_command(limit, output)
+    (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
+    env = environment()
+    if CONFIG["offline_evaluation"]:
+        env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
+    (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
+    print(f"Results: {output}", flush=True)
+    # The harness treats a local directory named "mmlu" as a task definition.
+    workdir = workdir or ARTIFACTS / "runtime"
+    workdir.mkdir(exist_ok=True)
+    subprocess.run(command, cwd=workdir, env=env, check=True)
+    if actual:
+        (output / "rounding-after.json").write_text(
+            json.dumps(get_json("/rounding/stats"), indent=2)
+        )
+    return output
+
+
+def harness_command(limit, output):
     model_args = ",".join(
         [
             f"model={CONFIG['model']}",
@@ -294,21 +381,7 @@ def evaluate(limit, output=None, workdir=None):
     ]
     if limit:
         command += ["--limit", str(limit)]
-    (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
-    env = environment()
-    if CONFIG["offline_evaluation"]:
-        env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
-    (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
-    print(f"Results: {output}", flush=True)
-    # The harness treats a local directory named "mmlu" as a task definition.
-    workdir = workdir or ARTIFACTS / "runtime"
-    workdir.mkdir(exist_ok=True)
-    subprocess.run(command, cwd=workdir, env=env, check=True)
-    if actual:
-        (output / "rounding-after.json").write_text(
-            json.dumps(get_json("/rounding/stats"), indent=2)
-        )
-    return output
+    return command
 
 
 def sweep(limit):
@@ -381,13 +454,17 @@ def job_root(name, limit):
     return ARTIFACTS / "jobs" / name
 
 
-def job(name, limit):
-    """MLSpace container entry point: serve one registry row, evaluate, stop."""
+def select(name):
     matches = [c for c in experiment_configs if c.get("name") == name]
     if len(matches) != 1:
         raise RuntimeError(f"Expected one experiment named {name!r}")
     CONFIG.clear()
     CONFIG.update(matches[0])
+
+
+def job(name, limit):
+    """MLSpace container entry point: serve one registry row, evaluate, stop."""
+    select(name)
     root = job_root(name, limit)
     attempt = root / time.strftime("%Y%m%d-%H%M%S")
     attempt.mkdir(parents=True)
@@ -449,7 +526,7 @@ def main():
     parser.add_argument(
         "--round-activations-site", choices=["mlp", "block"], default="mlp"
     )
-    parser.add_argument("--name", help="Registry experiment name for job")
+    parser.add_argument("--name", help="Registry experiment name for job or eval")
     parser.add_argument(
         "--detach", action="store_true", help="Run sweep in a tmux session"
     )
@@ -459,10 +536,12 @@ def main():
     if args.detach and args.action != "sweep":
         parser.error("--detach only applies to sweep")
     eps, quantile = args.round_activations_eps, args.round_activations_quantile
-    if (args.action == "job") != (args.name is not None):
-        parser.error("--name is required for job and only applies to it")
-    if args.action == "job" and (eps is not None or quantile is not None):
-        parser.error("job takes its zeroing settings from the registry")
+    if args.action == "job" and args.name is None:
+        parser.error("--name is required for job")
+    if args.name is not None and args.action not in ("job", "eval"):
+        parser.error("--name only applies to job and eval")
+    if args.name is not None and (eps is not None or quantile is not None):
+        parser.error("--name takes its zeroing settings from the registry")
     if eps is not None and (not math.isfinite(eps) or eps < 0):
         parser.error("epsilon must be finite and nonnegative")
     if quantile is not None and not (math.isfinite(quantile) and 0 <= quantile < 1):
@@ -481,6 +560,8 @@ def main():
         stop()
         start()
     elif args.action == "eval":
+        if args.name:
+            select(args.name)
         evaluate(args.limit)
     elif args.action == "sweep" and args.detach:
         launch_sweep(args.limit)
