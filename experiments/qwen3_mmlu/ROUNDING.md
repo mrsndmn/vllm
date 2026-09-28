@@ -157,14 +157,35 @@ server versus mlp 0 differs in 16 predictions with identical accuracy.
 Aggregate and per-layer CSVs are `rounding-sweep-summary.csv` and
 `rounding-sweep-layers.csv` in the artifact root.
 
+Quantile zeroing sweep (MLSpace jobs, commit `0c11e87412`, full 5-shot MMLU,
+all samples validated). "Total zero" is the zero share after zeroing including
+already-zero values; every layer of every run lies in [q, q + 0.11 pp]. Flips are
+changed answers versus the local baseline (`mlp` epsilon 0, 81.98%).
+
+| Experiment | MMLU % | Hum. | Soc. | STEM | Other | Total zero % | Flips (fixed/broken) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| mlp q=0.25 | 82.15 | 75.47 | 90.02 | 83.03 | 83.55 | 25.05 | 200 (89/66) |
+| mlp q=0.5 | 81.90 | 75.09 | 89.60 | 83.00 | 83.46 | 50.09 | 401 (153/165) |
+| block q=0.25 | 81.47 | 74.54 | 89.47 | 82.24 | 83.26 | 25.02 | 774 (276/348) |
+| block q=0.5 | 70.33 | 60.98 | 80.70 | 70.63 | 73.93 | 50.02 | 3231 (521/2157) |
+
+Summaries are `rounding-quantile-sweep-summary.csv` and
+`rounding-quantile-sweep-layers.csv` in the artifact root. No MLSpace baseline
+job was run; comparisons use the local baseline.
+
 ## Conclusions
 
 Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
 with no measurable MMLU change; epsilon 1e-1 zeroes about 60% for a 0.38 pp
 drop. The residual stream tolerates 1e-2 (about 7% zeroed) but collapses to
-chance at 1e-1, where early layers are almost entirely zeroed. Next steps:
-probe mlp between 1e-2 and 1e-1 and block between 1e-2 and 1e-1, or use
-per-layer thresholds.
+chance at 1e-1, where early layers are almost entirely zeroed.
+
+With a uniform per-token share, expert activations tolerate 50% zeroing (-0.08
+pp) in every layer, better than epsilon 1e-1 (60% overall, up to 99% in early
+layers, -0.38 pp). The residual stream tolerates 25% (-0.51 pp) but loses 11.7
+pp at 50%, although that is far less than epsilon 1e-1's collapse to chance.
+Next steps: probe mlp above 50% (e.g. 0.7, 0.8) and block between 0.25 and 0.5,
+and consider an MLSpace baseline job if job-to-local drift matters.
 
 ## Changelog
 
@@ -178,3 +199,8 @@ per-layer thresholds.
 - 2026-09-28: Completed mlp 1e-1 and block 1e-2/1e-1; recorded full results.
 - 2026-09-28: Added per-token quantile zeroing and an MLSpace job launcher for
   {mlp, block} x {q = 0.25, 0.5}; live checks pass for mlp and block at q = 0.5.
+- 2026-09-28: Quantile sweep completed on MLSpace (a100.1gpu): mlp_q0.25
+  lm-mpi-job-bc26f81b-4ca3-483b-b6b3-74dcea4b39c9, mlp_q0.5
+  lm-mpi-job-8954aff6-caa6-4b87-8622-573832c2fb1f, block_q0.25
+  lm-mpi-job-fa24bc7d-3388-46da-8969-5502420eb632, block_q0.5
+  lm-mpi-job-e8dc6836-ab28-417c-a91f-3a5a951b6974; recorded results.
