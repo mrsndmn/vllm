@@ -89,21 +89,30 @@ def reference_records(name, limit=None):
     return records
 
 
-def reference_response(record):
-    """The assistant text a user saw: reasoning plus any forced answer."""
-    return (
-        record["reasoning"]
-        + record.get("forced_suffix", "")
-        + record.get("forced_text", "")
-    )
+def reference_segments(record, tokenizer):
+    """(token ids, scored) parts of the reference assistant turn.
+
+    Model-written text is scored, including the end-of-turn token of a response
+    that stopped by itself; the injected forced-answer suffix is context only.
+    """
+    reasoning = tokenizer.encode(record["reasoning"], add_special_tokens=False)
+    if record.get("forced_suffix") is None:
+        end = tokenizer.convert_tokens_to_ids("<|im_end|>")
+        return [(reasoning + [end], True)]
+    return [
+        (reasoning, True),
+        (tokenizer.encode(record["forced_suffix"], add_special_tokens=False), False),
+        (tokenizer.encode(record["forced_text"], add_special_tokens=False), True),
+    ]
 
 
-def score_reference(prompt_ids, response_ids, post, config):
-    """Log-likelihood of a fixed response under the served (zeroed) model."""
+def score_reference(prompt_ids, segments, post, config):
+    """Log-likelihood of a fixed response's scored tokens under the served model."""
+    response = [token for ids, _ in segments for token in ids]
     result = post(
         {
             "model": config["model"],
-            "prompt": prompt_ids + response_ids,
+            "prompt": prompt_ids + response,
             "max_tokens": 1,
             "temperature": 0,
             "echo": True,
@@ -111,10 +120,12 @@ def score_reference(prompt_ids, response_ids, post, config):
         }
     )
     logprobs = result["choices"][0]["logprobs"]["token_logprobs"]
-    scored = logprobs[len(prompt_ids) : len(prompt_ids) + len(response_ids)]
-    if len(scored) != len(response_ids) or None in scored:
+    logprobs = logprobs[len(prompt_ids) : len(prompt_ids) + len(response)]
+    if len(logprobs) != len(response) or None in logprobs:
         raise RuntimeError("Missing prompt log-probabilities for reference response")
-    return {"reference_tokens": len(response_ids), "reference_logprob": sum(scored)}
+    mask = [scored for ids, scored in segments for _ in ids]
+    kept = [value for value, scored in zip(logprobs, mask) if scored]
+    return {"reference_tokens": len(kept), "reference_logprob": sum(kept)}
 
 
 def chat_prompt(tokenizer, question):
@@ -249,7 +260,7 @@ def run_eval(
             pairs = [
                 (
                     tokenizer.encode(r["prompt"], add_special_tokens=False),
-                    tokenizer.encode(reference_response(r), add_special_tokens=False),
+                    reference_segments(r, tokenizer),
                 )
                 for r in references
             ]
@@ -352,7 +363,8 @@ def summarize(pattern="*", baseline="chat_baseline"):
         rows.append(row)
     if not rows:
         raise SystemExit("No completed chat runs")
-    stem = run.ARTIFACTS / "rounding-chat-sweep"
+    suffix = "" if pattern == "*" else "-" + re.sub(r"[^\w.-]+", "_", pattern)
+    stem = run.ARTIFACTS / f"rounding-chat-sweep{suffix}"
     with stem.with_name(stem.name + "-summary.csv").open("w", newline="") as stream:
         fields = list(dict.fromkeys(key for row in rows for key in row))
         writer = csv.DictWriter(stream, fieldnames=fields)

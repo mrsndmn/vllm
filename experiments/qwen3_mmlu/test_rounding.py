@@ -653,6 +653,8 @@ def test_chat_summary_validates_runs_and_counts_changes(tmp_path, monkeypatch):
     assert (worse["changed_vs_baseline"], worse["broken_vs_baseline"]) == (1, 1)
     assert worse["min_layer_total_zero_percent"] == 51
     assert (tmp_path / "rounding-chat-sweep-summary.csv").exists()
+    chat_eval.summarize("chat_block*")
+    assert (tmp_path / "rounding-chat-sweep-chat_block_-summary.csv").exists()
     write_chat_run(tmp_path, "chat_mlp_q0.5", ["A"])
     with pytest.raises(AssertionError):
         chat_eval.summarize()
@@ -769,6 +771,10 @@ class EncodingTokenizer:
         assert add_special_tokens is False
         return [ord(c) for c in text]
 
+    def convert_tokens_to_ids(self, token):
+        assert token == "<|im_end|>"
+        return 0
+
 
 def test_reference_run_reuses_questions_and_scores_reference(tmp_path, monkeypatch):
     references = [
@@ -809,9 +815,10 @@ def test_reference_run_reuses_questions_and_scores_reference(tmp_path, monkeypat
     )
     records = [json.loads(line) for line in (tmp_path / "samples.jsonl").open()]
     assert [r["index"] for r in records] == [0, 1]
-    assert scored == [[ord(c) for c in "P0ab"], [ord(c) for c in "P1x!B"]]
-    assert [r["reference_tokens"] for r in records] == [2, 3]
-    assert records[1]["reference_logprob"] == -1.5
+    # Natural stop scores its end token; the injected suffix "!" is context only.
+    assert scored == [[ord(c) for c in "P0ab"] + [0], [ord(c) for c in "P1x!B"]]
+    assert [r["reference_tokens"] for r in records] == [3, 2]
+    assert records[1]["reference_logprob"] == -1.0
     assert result["reference"] == {
         "name": "chat_baseline",
         "tokens": 5,
@@ -825,7 +832,7 @@ def test_reference_scoring_rejects_missing_logprobs():
         return {"choices": [{"logprobs": {"token_logprobs": [None, None, -1.0]}}]}
 
     with pytest.raises(RuntimeError, match="Missing prompt"):
-        chat_eval.score_reference([1], [2, 3], post, CHAT)
+        chat_eval.score_reference([1], [([2, 3], True)], post, CHAT)
 
 
 def test_reference_records_limit_keeps_first_per_subject(tmp_path, monkeypatch):
@@ -904,3 +911,63 @@ def test_profile_rows_report_cost_changes_and_group_shares(tmp_path):
     assert (row["changed_vs_baseline"], row["broken_vs_baseline"]) == (1, 1)
     assert row["group_zero_percent"] == 50 and row["other_groups_max_zero_percent"] == 0
     assert rows["prof_baseline"]["delta_nll_per_token"] == 0
+
+
+def test_allocation_ties_are_deterministic_and_even():
+    costs = {(g, q): 0.0 for g in range(8) for q in (0.5, 0.75, 0.9)}
+    raw = dict(costs)
+    first = sensitivity.allocate(costs, (0.5, 0.75, 0.9), 0.7, 8, raw)
+    again = sensitivity.allocate(dict(costs), (0.5, 0.75, 0.9), 0.7, 8, dict(raw))
+    assert first == again and first["mean"] == pytest.approx(0.7)
+    # The exact budget wins over evenness; 4 x 0.5 + 4 x 0.9 is the only way.
+    assert first["schedule"] == [0.5] * 4 + [0.9] * 4
+    raw[(3, 0.9)] = -0.01  # cheapest by the unclamped loss
+    assert sensitivity.allocate(costs, (0.9,), 0.1, 8, raw)["schedule"][3] == 0.9
+    block = sensitivity.allocate(
+        {(g, q): 0.0 for g in range(8) for q in (0.25, 0.5, 0.75)},
+        (0.25, 0.5, 0.75),
+        0.3,
+        8,
+    )
+    assert block["mean"] == 0.3125
+
+
+def test_adaptive_rows_build_harness_and_chat_rows(monkeypatch):
+    schedule = [0.75, 0, 0.5, 0.75, 0.5, 0.75, 0.25, 0.5]
+    rows = run.adaptive_rows({("block", 0.5): schedule})
+    assert [r["name"] for r in rows] == ["adapt_block_b0.5", "chat_adapt_block_b0.5"]
+    harness, chat = rows
+    assert harness["task"] == "mmlu" and harness["launcher"] == "mls"
+    assert chat["task"] == "mmlu_stem_chat" and "chat_reference" not in chat
+    monkeypatch.setattr(run, "CONFIG", dict(harness))
+    args = run.rounding_args()
+    assert args[args.index("--round-activations-quantiles") + 1] == (
+        "0.75,0,0.5,0.75,0.5,0.75,0.25,0.5"
+    )
+
+
+def test_live_check_counts_follow_the_schedule():
+    import validate_live
+
+    config = {
+        "site": "block",
+        "epsilon": 0.0,
+        "quantile": 0.0,
+        "quantiles": [0.5] + [0.0] * 7,
+    }
+    layers = [
+        {
+            "tokens": 2,
+            "floats": 4096,
+            "newly_zeroed_floats": 2048 if i < 6 else 0,
+            "already_zero_floats": 0,
+            "affected_tokens": 2 if i < 6 else 0,
+        }
+        for i in range(48)
+    ]
+    validate_live.check_counts({"rounding_statistics": {"layers": layers}}, config)
+    layers[0]["newly_zeroed_floats"] = 100
+    with pytest.raises(AssertionError):
+        validate_live.check_counts({"rounding_statistics": {"layers": layers}}, config)
+    assert validate_live.zeroing(config)
+    assert not validate_live.zeroing(dict(config, quantiles=[0.0] * 8))

@@ -73,19 +73,30 @@ def profile(runs, reference):
     return rows
 
 
-def allocate(costs, levels, budget, groups):
-    """Cheapest per-group levels whose mean reaches the budget (exhaustive)."""
+def allocate(costs, levels, budget, groups, raw=None):
+    """Cheapest per-group levels whose mean reaches the budget (exhaustive).
+
+    Ties (costs within noise are clamped to zero) go to the lower unclamped
+    loss, then the smaller mean, then the most even schedule, then the order.
+    """
+    raw = raw or costs
     best = None
     for choice in itertools.product((0.0, *levels), repeat=groups):
-        if sum(choice) / groups < budget - 1e-9:
+        total = round(sum(choice), 9)
+        if total < round(budget * groups, 9):
             continue
-        cost = sum(costs[(g, q)] for g, q in enumerate(choice) if q)
-        key = (cost, sum(choice))
-        if best is None or key < best[0]:
-            best = (key, choice)
+        key = (
+            round(sum(costs[(g, q)] for g, q in enumerate(choice) if q), 12),
+            round(sum(raw[(g, q)] for g, q in enumerate(choice) if q), 12),
+            total,
+            max(choice) - min(choice),
+            choice,
+        )
+        if best is None or key < best:
+            best = key
     if best is None:
         raise ValueError(f"Budget {budget} is unreachable with levels {levels}")
-    (cost, total), choice = best
+    cost, _, total, _, choice = best
     return {"schedule": list(choice), "mean": total / groups, "predicted_cost": cost}
 
 
@@ -110,14 +121,17 @@ def main():
     noise = [r for r in rows if r["experiment"] == "prof_baseline_repeat"]
     schedules = {}
     for site, budgets in run.ADAPTIVE_BUDGETS.items():
-        costs = {
-            (r["group"], r["quantile"]): max(r["delta_nll_per_token"], 0.0)
+        # Changes within the unzeroed repeat's difference count as noise.
+        floor = abs(noise[0]["delta_nll_per_token"]) if noise else 0.0
+        raw = {
+            (r["group"], r["quantile"]): r["delta_nll_per_token"]
             for r in rows
             if r["site"] == site and r["group"] is not None
         }
+        costs = {key: max(value - floor, 0.0) for key, value in raw.items()}
         for budget in budgets:
             schedules[f"{site}_b{budget:g}"] = allocate(
-                costs, run.PROFILE_LEVELS[site], budget, run.GROUPS
+                costs, run.PROFILE_LEVELS[site], budget, run.GROUPS, raw
             ) | {"site": site, "budget": budget}
     output = {
         "noise_floor": noise[0] if noise else None,

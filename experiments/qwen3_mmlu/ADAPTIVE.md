@@ -28,6 +28,13 @@ All settings live in `run.py:experiment_configs` (`GROUPS`, `PROFILE_LEVELS`,
   controls at the same mean (`mlp_q0.6`-`0.8`, `block_q0.3`-`0.5`) on full 5-shot
   MMLU and on the chat check.
 
+Block levels are in 0.25 steps, so the 0.3 and 0.4 budgets are met at means of
+0.3125 and 0.40625, slightly above the uniform controls (a conservative bias
+against the adaptive arm). Re-scoring counts every model-written token,
+including the end of a response that stopped by itself, but not the injected
+forced-answer suffix; the cost subtracts the unzeroed repeat's difference as
+noise, and ties go to the lower unclamped loss, then the more even schedule.
+
 Stage A tunes on the chat check's own questions (user decision), so Stage C's
 chat comparison is in-sample; the full 5-shot test (14,042 questions) is the
 largely independent check.

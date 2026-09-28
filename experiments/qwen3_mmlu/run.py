@@ -162,24 +162,32 @@ experiment_configs += [
 # Stage C: schedules chosen by sensitivity.py from Stage A (filled after Stage A),
 # keyed by (site, budget = mean zero share); each gets a harness and a chat row.
 ADAPTIVE_SCHEDULES = {}
-for (site, budget), schedule in ADAPTIVE_SCHEDULES.items():
-    adaptive = dict(
-        round_activations_site=site,
-        round_activations_eps=0.0,
-        round_activations_quantile=0.0,
-        round_activations_quantiles=list(schedule),
-    )
-    experiment_configs += [
-        dict(
-            BASE_CONFIG,
-            adaptive,
-            name=f"adapt_{site}_b{budget:g}",
-            launcher="mls",
-            instance_type="a100.1gpu",
-            python=JOB_PYTHON,
-        ),
-        dict(CHAT_CONFIG, adaptive, name=f"chat_adapt_{site}_b{budget:g}"),
-    ]
+
+
+def adaptive_rows(schedules):
+    rows = []
+    for (site, budget), schedule in schedules.items():
+        adaptive = dict(
+            round_activations_site=site,
+            round_activations_eps=0.0,
+            round_activations_quantile=0.0,
+            round_activations_quantiles=list(schedule),
+        )
+        rows += [
+            dict(
+                BASE_CONFIG,
+                **adaptive,
+                name=f"adapt_{site}_b{budget:g}",
+                launcher="mls",
+                instance_type="a100.1gpu",
+                python=JOB_PYTHON,
+            ),
+            dict(CHAT_CONFIG, **adaptive, name=f"chat_adapt_{site}_b{budget:g}"),
+        ]
+    return rows
+
+
+experiment_configs += adaptive_rows(ADAPTIVE_SCHEDULES)
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()

@@ -29,7 +29,8 @@ def signature(response):
 
 
 def zeroing(config):
-    return config["epsilon"] > 0 or config.get("quantile", 0) > 0
+    schedule = config.get("quantiles") or []
+    return config["epsilon"] > 0 or config.get("quantile", 0) > 0 or any(schedule)
 
 
 def check_counts(response, config):
@@ -37,9 +38,12 @@ def check_counts(response, config):
     layers = stats["layers"]
     assert len(layers) == 48, stats
     width = 6144 if config["site"] == "mlp" else 2048
-    quantile = config.get("quantile", 0)
+    schedule = config.get("quantiles")
     assert len({layer["tokens"] for layer in layers}) == 1
-    for layer in layers:
+    for index, layer in enumerate(layers):
+        quantile = config.get("quantile", 0)
+        if schedule:
+            quantile = schedule[index * len(schedule) // len(layers)]
         assert layer["tokens"] > 0
         assert layer["floats"] == layer["tokens"] * width
         assert 0 <= layer["newly_zeroed_floats"] <= layer["floats"]
@@ -127,7 +131,11 @@ def main():
         "chat": chat,
         "stream_statistics": json.loads(events[-2]),
     }
-    strength = f"q{config['quantile']}" if config.get("quantile") else config["epsilon"]
+    strength = config["epsilon"]
+    if config.get("quantile"):
+        strength = f"q{config['quantile']}"
+    if config.get("quantiles"):
+        strength = "s" + "_".join(map(str, config["quantiles"]))
     path = ARTIFACTS / f"validation-{config['site']}-{strength}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"Live checks passed: {path}")
