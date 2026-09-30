@@ -8,7 +8,13 @@ import runpy
 import sys
 from pathlib import Path
 
-from rounding_stats import connect, validate_eps, validate_quantile, validate_schedule
+from rounding_stats import (
+    SITES,
+    connect,
+    validate_eps,
+    validate_quantile,
+    validate_schedule,
+)
 
 
 def main():
@@ -32,7 +38,7 @@ def main():
         help="Comma-separated quantile per equal consecutive layer group",
     )
     parser.add_argument(
-        "--round-activations-site", choices=["mlp", "block"], required=True
+        "--round-activations-site", choices=SITES, required=True
     )
     parser.add_argument("--rounding-db", type=Path, required=True)
     args, server_args = parser.parse_known_args()

@@ -7,14 +7,21 @@ intermediate activations are set to zero during inference.
 
 **Zeroing site**:
 The place in each layer where activations are tested and zeroed: `mlp` (selected
-experts' SiLU-and-multiply outputs before down projection) or `block` (the FP32
-residual-stream sum before the next add/RMSNorm).
+experts' SiLU-and-multiply outputs before down projection), `block` (the FP32
+residual-stream sum before the next add/RMSNorm), or `moe_out` (the layer's MoE
+output alone).
 _Avoid_: rounding site, hook, location
+
+**MoE output**:
+A layer's router-weighted sum of its selected experts' outputs, before it is added
+to the residual stream; the `moe_out` site tests and zeroes it alone, leaving the
+residual stream untouched.
+_Avoid_: block residual, residual branch, block output
 
 **Token row**:
 All activations of one token at one layer and zeroing site: the concatenated
-outputs of its 8 selected experts for `mlp`, or its hidden-size residual vector
-for `block`.
+outputs of its 8 selected experts for `mlp`, its hidden-size residual vector
+for `block`, or its hidden-size MoE output for `moe_out`.
 _Avoid_: activation vector, sample
 
 **Fixed-ε zeroing**:
@@ -44,3 +51,14 @@ _Avoid_: sparsity (unqualified)
 The locally served full-MMLU run with the zeroing hook active and nothing zeroed
 (`mlp`, ε = 0; 81.98%), against which zeroing results are compared.
 _Avoid_: control, original run
+
+**Generative check**:
+The seeded 304-question MMLU STEM evaluation in which the chat model writes its
+reasoning and then an answer letter; its arms are compared with the unzeroed chat
+baseline (92.76%).
+_Avoid_: chat eval (unqualified), generative MMLU
+
+**Noise floor**:
+The number of answers that change between two identical unzeroed generative-check
+runs (9), the change expected from batching nondeterminism alone.
+_Avoid_: variance, error bar

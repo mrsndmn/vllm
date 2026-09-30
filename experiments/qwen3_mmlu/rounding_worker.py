@@ -9,8 +9,10 @@ import numpy as np
 import torch
 from rounding_stats import (
     FIELDS,
+    SITES,
     connect,
     group_quantile,
+    layer_operands,
     threshold,
     validate_eps,
     validate_quantile,
@@ -50,6 +52,8 @@ class RoundingWorker(Worker):
         if sum(map(bool, (self.eps, self.quantile, self.schedule))) > 1:
             raise ValueError("Use one of epsilon, quantile, or quantile schedule")
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
+        if self.site not in SITES:
+            raise ValueError(f"Unknown rounding site {self.site!r}")
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
         self.active_counts = {}
         self.batch_ids = []
@@ -77,7 +81,7 @@ class RoundingWorker(Worker):
 
                 def block_hook(module, inputs, output, *, idx=index):
                     hidden, residual = output
-                    self.record(idx, hidden, residual)
+                    self.record(idx, *layer_operands(self.site, hidden, residual))
                     return hidden, residual
 
                 layer.register_forward_hook(block_hook)

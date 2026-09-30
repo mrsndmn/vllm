@@ -14,6 +14,21 @@ FIELDS = (
     "affected_tokens",
     "all_zero_tokens_after",
 )
+SITES = ("mlp", "block", "moe_out")
+
+
+def layer_operands(site, hidden, residual):
+    """(values, residual) a decoder-layer output site passes to ``threshold``.
+
+    ``hidden`` is the layer's MoE output and ``residual`` the stream it is added to.
+    ``block`` tests their sum and zeroes both; ``moe_out`` tests and zeroes the MoE
+    output alone, leaving the residual stream untouched.
+    """
+    if site == "block":
+        return hidden, residual
+    if site == "moe_out":
+        return hidden, None
+    raise ValueError(f"Site {site!r} is not a decoder-layer output site")
 
 
 def validate_eps(value):

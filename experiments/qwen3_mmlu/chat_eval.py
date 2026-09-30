@@ -336,6 +336,7 @@ def summarize(pattern="*", baseline="chat_baseline"):
         row = {
             "experiment": name,
             "site": config["round_activations_site"],
+            "epsilon": config["round_activations_eps"],
             "quantile": config["round_activations_quantile"],
             "accuracy_percent": 100 * result["accuracy"],
             "correct": result["correct"],

@@ -200,6 +200,29 @@ def adaptive_rows(schedules):
 
 
 experiment_configs += adaptive_rows(ADAPTIVE_SCHEDULES)
+# Generative fixed-eps arms at every site, and quantile arms at moe_out (the MoE
+# output alone, residual stream untouched; ADR 0003) paired with chat_block_q0.4
+# and chat_block_q0.5 at the same per-token share.
+experiment_configs += [
+    dict(
+        CHAT_CONFIG,
+        name=f"chat_{site}_eps{eps:g}",
+        round_activations_site=site,
+        round_activations_eps=eps,
+        round_activations_quantile=0.0,
+    )
+    for site in ("mlp", "block", "moe_out")
+    for eps in (0.01, 0.1, 0.5)
+] + [
+    dict(
+        CHAT_CONFIG,
+        name=f"chat_moe_out_q{quantile:g}",
+        round_activations_site="moe_out",
+        round_activations_eps=0.0,
+        round_activations_quantile=quantile,
+    )
+    for quantile in (0.4, 0.5)
+]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
@@ -623,7 +646,8 @@ def main():
         help="Comma-separated quantile per equal consecutive layer group",
     )
     parser.add_argument(
-        "--round-activations-site", choices=["mlp", "block"], default="mlp"
+        # Same values as rounding_stats.SITES (not imported: launchers lack torch).
+        "--round-activations-site", choices=["mlp", "block", "moe_out"], default="mlp"
     )
     parser.add_argument("--name", help="Registry experiment name for job or eval")
     parser.add_argument(

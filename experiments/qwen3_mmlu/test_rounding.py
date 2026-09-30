@@ -15,6 +15,7 @@ from rounding_api import RoundingMiddleware
 from rounding_stats import (
     connect,
     group_quantile,
+    layer_operands,
     read_stats,
     threshold,
     validate_eps,
@@ -390,6 +391,7 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
     assert [c["name"] for c in run_jobs.job_configs("chat_*_q0.5")] == [
         "chat_mlp_q0.5",
         "chat_block_q0.5",
+        "chat_moe_out_q0.5",
     ]
 
 
@@ -558,7 +560,8 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
         for c in run.experiment_configs
         if c.get("task") == "mmlu_stem_chat"
         and c["name"].startswith("chat_")
-        and not c["name"].startswith("chat_adapt_")
+        and not c["name"].startswith(("chat_adapt_", "chat_moe_out_"))
+        and "_eps" not in c["name"]
     ]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
@@ -590,6 +593,72 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
         (run.job_root(name, None) / "done.json").write_text(json.dumps({"n": name}))
     run_jobs.collect()
     assert json.loads((tmp_path / "manifest.json").read_text()) == [{"n": "mlp_q0.5"}]
+
+
+def test_generative_eps_and_moe_out_rows():
+    rows = {
+        c["name"]: c
+        for c in run.experiment_configs
+        if "_eps" in c.get("name", "") or c.get("name", "").startswith("chat_moe_out")
+    }
+    eps_names = [
+        f"chat_{site}_eps{eps}"
+        for site in ("mlp", "block", "moe_out")
+        for eps in ("0.01", "0.1", "0.5")
+    ]
+    assert list(rows) == eps_names + ["chat_moe_out_q0.4", "chat_moe_out_q0.5"]
+    baseline = next(c for c in run.experiment_configs if c.get("name") == "chat_baseline")
+    zeroing = ("name", "round_activations_site", "round_activations_eps")
+    zeroing += ("round_activations_quantile",)
+    for name, config in rows.items():
+        # Same protocol and job settings as chat_baseline; only zeroing differs.
+        assert {k: v for k, v in config.items() if k not in zeroing} == {
+            k: v for k, v in baseline.items() if k not in zeroing
+        }
+        assert "round_activations_quantiles" not in config
+        if "_eps" in name:
+            assert config["round_activations_quantile"] == 0.0
+            assert config["round_activations_eps"] == float(name.split("_eps")[1])
+        else:
+            assert config["round_activations_eps"] == 0.0
+            assert config["round_activations_quantile"] == float(name.split("_q")[1])
+    moe_out = [c for c in rows.values() if c["round_activations_site"] == "moe_out"]
+    assert len(moe_out) == 5
+
+
+def test_moe_out_zeroes_the_moe_output_and_keeps_the_residual_bits():
+    hidden = torch.tensor([[0.001, -0.5, 0.004, 2.0]], dtype=torch.bfloat16)
+    residual = torch.tensor([[-0.001, 0.5, 3.0, -1.0]], dtype=torch.bfloat16)
+    original = residual.view(torch.int16).clone()
+    values, stream = layer_operands("moe_out", hidden, residual)
+    assert values is hidden and stream is None
+    # Selection uses |h| alone: position 1 cancels in h + r but is kept here.
+    counts = threshold(values, 0.005, stream)
+    assert hidden.tolist() == [[0, -0.5, 0, 2.0]]
+    assert torch.equal(residual.view(torch.int16), original)
+    assert counts.tolist() == [[4, 2, 0, 1, 1, 0]]
+    hidden = torch.tensor([[0.25, -1.0, 0.5, 4.0]], dtype=torch.bfloat16)
+    values, stream = layer_operands("moe_out", hidden, residual)
+    threshold(values, 0, stream, quantile=0.5)
+    assert hidden.tolist() == [[0, -1.0, 0, 4.0]]
+    assert torch.equal(residual.view(torch.int16), original)
+    before = hidden.view(torch.int16).clone()
+    threshold(values, 0, stream, quantile=0.0)
+    assert torch.equal(hidden.view(torch.int16), before)
+    assert layer_operands("block", hidden, residual) == (hidden, residual)
+    with pytest.raises(ValueError):
+        layer_operands("mlp", hidden, residual)
+
+
+def test_run_cli_and_server_accept_every_site():
+    from rounding_stats import SITES
+
+    source = (run.SCRIPT.parent / "run.py").read_text()
+    assert f'choices={list(SITES)}'.replace("'", '"') in source
+    help_text = subprocess.run(
+        [sys.executable, str(run.SCRIPT), "--help"], capture_output=True, text=True
+    ).stdout
+    assert "moe_out" in help_text
 
 
 def test_evaluate_routes_chat_rows_to_chat_eval(tmp_path, monkeypatch):
@@ -655,8 +724,16 @@ def test_chat_summary_validates_runs_and_counts_changes(tmp_path, monkeypatch):
     monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
     write_chat_run(tmp_path, "chat_baseline", ["A", "A"])
     write_chat_run(tmp_path, "chat_block_q0.5", ["A", None])
+    write_chat_run(tmp_path, "chat_moe_out_eps0.1", ["A", "A"])
     rows = {row["experiment"]: row for row in chat_eval.summarize()}
     assert rows["chat_baseline"]["accuracy_percent"] == 100
+    moe_out = rows["chat_moe_out_eps0.1"]
+    assert (moe_out["site"], moe_out["epsilon"], moe_out["quantile"]) == (
+        "moe_out",
+        0.1,
+        0,
+    )
+    assert moe_out["changed_vs_baseline"] == 0
     worse = rows["chat_block_q0.5"]
     assert worse["accuracy_percent"] == 50 and worse["unparsed"] == 1
     assert (worse["changed_vs_baseline"], worse["broken_vs_baseline"]) == (1, 1)

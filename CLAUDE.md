@@ -14,7 +14,8 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/run.py eval --limit 1`: MMLU smoke evaluation.
 - `experiments/qwen3_mmlu/run.py eval`: full MMLU through the local HTTP API.
 - `experiments/qwen3_mmlu/run.py restart --round_activations_eps 1e-4
-  --round-activations-site mlp`: instrumented serving (`block` is the other site).
+  --round-activations-site mlp`: instrumented serving (other sites: `block`,
+  `moe_out`; every flag, schedule, and eval path accepts all three).
 - `experiments/qwen3_mmlu/run.py sweep --limit 1`: all configured smoke runs.
 - `experiments/qwen3_mmlu/run.py sweep`: sequential local full MMLU sweep;
   resumes by skipping configurations already recorded in its manifest.
@@ -40,6 +41,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/chat_eval.py summarize [--filter GLOB]`: validate
   finished chat jobs and write `rounding-chat-sweep-summary.csv` with answer
   changes vs `chat_baseline`.
+- Generative fixed-ε and moe_out rows: `chat_{mlp,block,moe_out}_eps{0.01,0.1,0.5}`
+  and `chat_moe_out_q{0.4,0.5}` (launch with `run_jobs.py --filter 'chat_*_eps*'`
+  and `--filter 'chat_moe_out_q*'`).
 - `experiments/qwen3_mmlu/run.py restart --round-activations-quantiles
   0,0,0.75,0,0,0,0,0 --round-activations-site block`: one quantile per equal
   consecutive layer group (8 groups of 6); exclusive with eps and quantile.
@@ -66,15 +70,18 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 
 The rounding wrapper does not modify installed packages. Epsilon zero preserves
 original operands; block rounding tests the FP32 sum of hidden and residual
-operands before the next fused add/RMSNorm. MoE rounding tests the selected
-experts' SiLU-and-multiply outputs before down projection. SQLite counters cover
+operands before the next fused add/RMSNorm. `moe_out` rounding tests and zeroes
+the layer's MoE output (hidden) alone and never touches the residual stream
+(ADR 0003). MoE rounding tests the selected experts' SiLU-and-multiply outputs
+before down projection. SQLite counters cover
 executed token positions, exclude cached prefixes and warmup, and include any
 recomputed positions. Each server startup gets a separate database. The wrapper
 assigns unique request IDs to prevent statistics collisions.
 
 Configuration lives in the script's `experiment_configs`; lifecycle instructions
 and results live in `experiments/qwen3_mmlu/README.md` and `ROUNDING.md`.
-Artifacts are outside the checkout. Fixed-epsilon rows run locally; quantile rows
-run as MLSpace jobs from a per-commit snapshot of `experiments/qwen3_mmlu`, using
+Artifacts are outside the checkout. Unnamed 5-shot fixed-epsilon rows run locally;
+named (`launcher="mls"`) rows, including the generative fixed-epsilon rows, run as
+MLSpace jobs from a per-commit snapshot of `experiments/qwen3_mmlu`, using
 `/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126` (`~/.mlspace` is not mounted
 in job containers). Domain terms are in `CONTEXT.md`; decisions in `docs/adr/`.

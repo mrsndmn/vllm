@@ -34,6 +34,13 @@ inside fused add/RMSNorm. Both residual operands are zeroed at selected position
 all other operands retain their original bit patterns. This avoids introducing
 an extra BF16 rounding operation throughout the residual stream.
 
+`moe_out` tests each token's MoE output alone (the router-weighted sum of its
+selected experts, 2048 values, before it is added to the residual stream) and
+zeroes selected entries of it only; the residual stream keeps its original bits,
+so the next fused add computes r + h' instead of r + h. It isolates sparsifying
+one layer's update from wiping the accumulated stream, which `block` does (see
+`docs/adr/0003-moe-out-site-tests-the-moe-output-alone.md`).
+
 ### Quantile zeroing (MLSpace jobs)
 
 `--round-activations-quantile q` (q in [0, 1), exclusive with a nonzero
@@ -84,6 +91,12 @@ has none); `enable_thinking=False` is passed anyway. `chat_baseline` serves the
 wrapper with nothing zeroed so the four quantile arms share its protocol;
 `chat_baseline_repeat` repeats it to measure answer changes from batching
 nondeterminism alone. Requests retry up to 3 times.
+
+Fixed-ε arms `chat_{mlp,block,moe_out}_eps{0.01,0.1,0.5}` and quantile arms
+`chat_moe_out_q{0.4,0.5}` use the same protocol. The moe_out quantile arms pair
+with `chat_block_q0.4`/`chat_block_q0.5` at the same per-token share; ε arms zero
+different shares at different sites, so they are compared through their measured
+per-layer zero shares, not as matched pairs.
 
 ```bash
 $M experiments/qwen3_mmlu/run_jobs.py --filter 'chat_*' --dry
@@ -281,3 +294,6 @@ Expert activations stay near the noise floor up to 80% zeroing in chat
   chat_mlp_q0.95 lm-mpi-job-3f0ebfc0-b52d-4c90-b15e-3a971a1a085c, chat_mlp_q0.99
   lm-mpi-job-400412f9-dd28-4e8c-9dc0-bc9bebfbab30.
 - 2026-09-30: High-quantile chat arms completed; recorded results.
+- 2026-09-30: Added the `moe_out` zeroing site (MoE output alone, residual stream
+  untouched) and generative arms: fixed ε ∈ {0.01, 0.1, 0.5} at mlp, block, and
+  moe_out, and moe_out q ∈ {0.4, 0.5} (spec from a deep interview).
