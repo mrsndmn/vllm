@@ -366,3 +366,9 @@ the same site gives every layer exactly its share.
   chat_moe_out_q0.4 lm-mpi-job-0f09bd35-c8bd-4d93-8162-5d3e167d570e,
   chat_moe_out_q0.5 lm-mpi-job-200ef4e8-ea26-4ef7-b212-5d63ad4c20fc.
 - 2026-09-30: Generative ε and moe_out arms completed; recorded results.
+- 2026-09-30: Launched moe_out high-quantile chat arms (commit `6eb25993ae`,
+  a100.1gpu): chat_moe_out_q0.7 lm-mpi-job-30bf9ec4-eb14-4bd6-9c36-efa0ebb13134,
+  chat_moe_out_q0.8 lm-mpi-job-f5e32351-04ca-4520-8d86-e33444a4f3ec,
+  chat_moe_out_q0.9 lm-mpi-job-e4a48ec2-cc47-4e98-b3e6-13ac33a0d5f1,
+  chat_moe_out_q0.95 lm-mpi-job-3d377f42-5e4b-4b11-95cc-9ced51b87ce6,
+  chat_moe_out_q0.99 lm-mpi-job-7261f66a-c76a-4b81-9aee-6f2ef390b1b0.
