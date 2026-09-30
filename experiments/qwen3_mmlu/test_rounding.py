@@ -606,7 +606,9 @@ def test_generative_eps_and_moe_out_rows():
         for site in ("mlp", "block", "moe_out")
         for eps in ("0.01", "0.1", "0.5")
     ]
-    assert list(rows) == eps_names + ["chat_moe_out_q0.4", "chat_moe_out_q0.5"]
+    quantiles = ("0.4", "0.5", "0.7", "0.8", "0.9", "0.95", "0.99")
+    q_names = [f"chat_moe_out_q{q}" for q in quantiles]
+    assert list(rows) == eps_names + q_names
     baseline = next(
         c for c in run.experiment_configs if c.get("name") == "chat_baseline"
     )
@@ -625,7 +627,7 @@ def test_generative_eps_and_moe_out_rows():
             assert config["round_activations_eps"] == 0.0
             assert config["round_activations_quantile"] == float(name.split("_q")[1])
     moe_out = [c for c in rows.values() if c["round_activations_site"] == "moe_out"]
-    assert len(moe_out) == 5
+    assert len(moe_out) == 10
 
 
 def test_moe_out_zeroes_the_moe_output_and_keeps_the_residual_bits():

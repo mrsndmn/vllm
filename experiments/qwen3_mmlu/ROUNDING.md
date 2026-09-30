@@ -95,8 +95,9 @@ wrapper with nothing zeroed so the four quantile arms share its protocol;
 nondeterminism alone. Requests retry up to 3 times.
 
 Fixed-ε arms `chat_{mlp,block,moe_out}_eps{0.01,0.1,0.5}` and quantile arms
-`chat_moe_out_q{0.4,0.5}` use the same protocol. The moe_out quantile arms pair
-with `chat_block_q0.4`/`chat_block_q0.5` at the same per-token share; ε arms zero
+`chat_moe_out_q{0.4,0.5,0.7,0.8,0.9,0.95,0.99}` use the same protocol. The moe_out
+quantile arms pair with `chat_block_q0.4`/`chat_block_q0.5` at the same per-token
+share, and 0.7-0.99 reach the levels of the high mlp arms; ε arms zero
 different shares at different sites, so they are compared through their measured
 per-layer zero shares, not as matched pairs.
 

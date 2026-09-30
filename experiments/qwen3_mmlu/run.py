@@ -13,57 +13,6 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-experiment_configs = [
-    {
-        "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
-        "snapshot": "/workspace-SR004.nfs2/.cache/huggingface/hub/"
-        "models--Qwen--Qwen3-30B-A3B-Instruct-2507/snapshots/"
-        "0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe",
-        "python": "/home/jovyan/.mlspace/envs/vllm_cu126/bin/python",
-        "artifacts": "/mnt/virtual_ai0001053-00054_SR004-nfs2/"
-        "d.tarasov/vllm-artifacts/qwen3_mmlu",
-        "session": "vllm-qwen3-30b-a3b",
-        "port": 8000,
-        "max_model_len": 8192,
-        "memory_fraction": 0.80,
-        "max_num_seqs": 8,
-        "max_num_batched_tokens": 1024,
-        "task": "mmlu",
-        "fewshot": 5,
-        "offline_evaluation": True,
-    }
-]
-CONFIG = experiment_configs[0]
-BASE_CONFIG = CONFIG.copy()
-experiment_configs = [
-    dict(BASE_CONFIG, round_activations_site=site, round_activations_eps=eps)
-    for site, epsilons in (
-        ("mlp", (0.0, 1e-4, 1e-3, 1e-2, 1e-1)),
-        ("block", (1e-2, 1e-1)),
-    )
-    for eps in epsilons
-]
-# MLSpace job containers do not mount ~/.mlspace; this path is the same env.
-JOB_PYTHON = "/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126/bin/python"
-# Quantile zeroing runs as MLSpace jobs (run_jobs.py); fixed-eps rows run locally.
-experiment_configs += [
-    dict(
-        BASE_CONFIG,
-        name=f"{site}_q{quantile:g}",
-        launcher="mls",
-        instance_type="a100.1gpu",
-        python=JOB_PYTHON,
-        round_activations_site=site,
-        round_activations_eps=0.0,
-        round_activations_quantile=quantile,
-    )
-    # 0.6-0.8 (mlp) and 0.3-0.4 (block) are uniform controls for adaptive budgets.
-    for site, quantiles in (
-        ("mlp", (0.25, 0.5, 0.6, 0.7, 0.8)),
-        ("block", (0.25, 0.3, 0.4, 0.5)),
-    )
-    for quantile in quantiles
-]
 # Generative chat-format check on a seeded MMLU STEM subset (chat_eval.py).
 STEM_SUBJECTS = [
     "abstract_algebra",
@@ -86,22 +35,42 @@ STEM_SUBJECTS = [
     "high_school_statistics",
     "machine_learning",
 ]
+# Local serving and evaluation defaults; every registry row derives from them.
+# All evaluation is generative (ADR 0004).
+experiment_configs = [
+    {
+        "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+        "snapshot": "/workspace-SR004.nfs2/.cache/huggingface/hub/"
+        "models--Qwen--Qwen3-30B-A3B-Instruct-2507/snapshots/"
+        "0d7cf23991f47feeb3a57ecb4c9cee8ea4a17bfe",
+        "python": "/home/jovyan/.mlspace/envs/vllm_cu126/bin/python",
+        "artifacts": "/mnt/virtual_ai0001053-00054_SR004-nfs2/"
+        "d.tarasov/vllm-artifacts/qwen3_mmlu",
+        "session": "vllm-qwen3-30b-a3b",
+        "port": 8000,
+        "max_model_len": 8192,
+        "memory_fraction": 0.80,
+        "max_num_seqs": 16,
+        "max_num_batched_tokens": 1024,
+        "task": "mmlu_stem_chat",
+        "offline_evaluation": True,
+        "chat_subjects": STEM_SUBJECTS,
+        "chat_per_subject": 16,
+        "chat_seed": 0,
+        "chat_max_reasoning_tokens": 1024,
+        "chat_max_answer_tokens": 5,
+        "chat_concurrency": 16,
+    }
+]
+CONFIG = experiment_configs[0]
+BASE_CONFIG = CONFIG.copy()
+# MLSpace job containers do not mount ~/.mlspace; this path is the same env.
+JOB_PYTHON = "/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126/bin/python"
+# Registry rows run as MLSpace jobs (run_jobs.py).
 CHAT_CONFIG = dict(
-    BASE_CONFIG,
-    launcher="mls",
-    instance_type="a100.1gpu",
-    python=JOB_PYTHON,
-    task="mmlu_stem_chat",
-    fewshot=0,
-    max_num_seqs=16,
-    chat_subjects=STEM_SUBJECTS,
-    chat_per_subject=16,
-    chat_seed=0,
-    chat_max_reasoning_tokens=1024,
-    chat_max_answer_tokens=5,
-    chat_concurrency=16,
+    BASE_CONFIG, launcher="mls", instance_type="a100.1gpu", python=JOB_PYTHON
 )
-experiment_configs += [
+experiment_configs = [
     dict(
         CHAT_CONFIG,
         name=name or f"chat_{site}_q{quantile:g}",
@@ -202,7 +171,8 @@ def adaptive_rows(schedules):
 experiment_configs += adaptive_rows(ADAPTIVE_SCHEDULES)
 # Generative fixed-eps arms at every site, and quantile arms at moe_out (the MoE
 # output alone, residual stream untouched; ADR 0003) paired with chat_block_q0.4
-# and chat_block_q0.5 at the same per-token share.
+# and chat_block_q0.5 at the same per-token share; 0.7-0.99 match the high mlp
+# quantile arms.
 experiment_configs += [
     dict(
         CHAT_CONFIG,
@@ -221,7 +191,7 @@ experiment_configs += [
         round_activations_eps=0.0,
         round_activations_quantile=quantile,
     )
-    for quantile in (0.4, 0.5)
+    for quantile in (0.4, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99)
 ]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"

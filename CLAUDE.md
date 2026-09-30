@@ -42,7 +42,7 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   finished chat jobs and write `rounding-chat-sweep-summary.csv` with answer
   changes vs `chat_baseline`.
 - Generative fixed-ε and moe_out rows: `chat_{mlp,block,moe_out}_eps{0.01,0.1,0.5}`
-  and `chat_moe_out_q{0.4,0.5}` (launch with `run_jobs.py --filter 'chat_*_eps*'`
+  and `chat_moe_out_q{0.4,0.5,0.7,0.8,0.9,0.95,0.99}` (launch with `run_jobs.py --filter 'chat_*_eps*'`
   and `--filter 'chat_moe_out_q*'`).
 - `experiments/qwen3_mmlu/run.py restart --round-activations-quantiles
   0,0,0.75,0,0,0,0,0 --round-activations-site block`: one quantile per equal
