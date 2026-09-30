@@ -266,6 +266,24 @@ exactly one arm answers correctly; z = (only moe_out − only block) /
 
 Summary: `rounding-chat-sweep-summary.csv` (now with an `epsilon` column).
 
+High moe_out quantiles (commit `6eb25993ae`, same setup, all samples validated),
+next to the mlp arms at the same total zero share. Changes are versus
+chat_baseline (92.76%, noise floor 9). "Forced" counts capped responses plus
+finished responses without an answer line (q0.95: 57 capped, 246 without a
+line). z is the paired statistic against the mlp arm at the same q (only-moe_out
+minus only-mlp correct, over the square root of their sum).
+
+| q | moe_out % | Natural / forced | Unparsed | Mean reasoning tokens | Changed (fixed/broken) | Total zero % | mlp % at same q | Only moe_out / only mlp | z |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.7 | 88.49 | 299 / 5 | 0 | 147 | 32 (7/20) | 70.10–70.11 | 91.78 | 6 / 16 | -2.1 |
+| 0.8 | 86.18 | 298 / 6 | 0 | 170 | 38 (7/27) | 80.09–80.11 | 91.12 | 8 / 23 | -2.7 |
+| 0.9 | 46.71 | 130 / 174 | 0 | 631 | 156 (5/145) | 90.07–90.09 | 88.16 | 9 / 135 | -10.5 |
+| 0.95 | 24.01 | 1 / 303 | 85 | 296 | 233 (5/214) | 95.01–95.03 | 86.51 | 10 / 200 | -13.1 |
+| 0.99 | 0.00 | 0 / 304 | 304 | 1024 | 304 (0/282) | 98.98–99.00 | 66.12 | 0 / 201 | -14.2 |
+
+At q0.95 most responses echo the prompt and stop without an answer line; at
+q0.99 every response repeats "one of the" until the cap.
+
 ## Conclusions
 
 Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
@@ -304,6 +322,14 @@ parsable answer; both zero almost all values in some layers (up to 99.5% and
 99.99%). At ε 0.5 only mlp still answers (60.5% at 95% zeroed). A constant ε on
 the MoE output zeroes 12-99.99% per layer at ε 0.1, whereas quantile zeroing at
 the same site gives every layer exactly its share.
+
+Beyond half the MoE output, moe_out degrades faster than mlp at the same share.
+It stays within 1 pp of chat_baseline up to q0.5, then loses 4.3 pp at q0.7
+(32 changed answers, 20 broken) and 6.6 pp at q0.8, while mlp stays within
+1.7 pp at both. It fails at q0.9 (46.7%, 57% of responses capped), falls to
+chance at q0.95, and produces no answers at q0.99, whereas mlp still scores
+88.2%, 86.5%, and 66.1% there. At q0.7 and q0.8 responses are shorter than the
+baseline's (147 and 170 tokens against 206).
 
 ## Changelog
 
@@ -365,3 +391,7 @@ the same site gives every layer exactly its share.
   rows, `summarize_rounding.py`, `run_jobs.py --collect`) and deleted its
   artifacts (`mmlu/`, `smoke/`, their jobs and smoke job, `rounding-sweep*`,
   `rounding-quantile-sweep*`, and the server databases and logs they used).
+- 2026-09-30: moe_out high-quantile chat arms completed; recorded results.
+  Commit `6eb25993ae` also carries part of the refactor that retired 5-shot
+  evaluation (finished in `7074cadbf5`); its harness tests fail at that commit,
+  but the chat_moe_out_q rows it launched are identical to HEAD's.
