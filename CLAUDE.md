@@ -1,5 +1,18 @@
 # Local experiment usage
 
+## Evaluation policy
+
+All further evaluation must be generative: the model writes its answer through
+the chat template and the answer is parsed from the generated text
+(`experiments/qwen3_mmlu/chat_eval.py`, the generative check). Do not add or
+revive likelihood-based evaluation (lm-evaluation-harness `loglikelihood` tasks,
+5-shot answer-letter or choice log-probability scoring). The harness path, its
+rows, and its artifacts were removed on 2026-09-30 (`docs/adr/0004`); 5-shot
+numbers in the experiment notes are history. New arms are `chat_*` registry rows
+compared with `chat_baseline` and its noise floor. Log-probabilities are still
+used, but not as an evaluation, by `validate_live.py` server-parity checks and by
+the `prof_*` re-scoring of `chat_baseline`'s generated responses.
+
 ## Usage arms
 
 `experiments/qwen3_mmlu/run.py` uses the installed vLLM environment and cached
@@ -11,17 +24,13 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/run.py status`: session and HTTP model-list check.
 - `experiments/qwen3_mmlu/run.py stop`: graceful server shutdown.
 - `experiments/qwen3_mmlu/run.py restart`: stop followed by start.
-- `experiments/qwen3_mmlu/run.py eval --limit 1`: MMLU smoke evaluation.
-- `experiments/qwen3_mmlu/run.py eval`: full MMLU through the local HTTP API.
+- `experiments/qwen3_mmlu/run.py eval --limit 1`: generative-check smoke run
+  (1 question per STEM subject) against the running local server.
+- `experiments/qwen3_mmlu/run.py eval`: full 304-question generative check
+  through the local HTTP API; outputs under `<artifacts>/chat[-smoke]/<time>/`.
 - `experiments/qwen3_mmlu/run.py restart --round_activations_eps 1e-4
   --round-activations-site mlp`: instrumented serving (other sites: `block`,
   `moe_out`; every flag, schedule, and eval path accepts all three).
-- `experiments/qwen3_mmlu/run.py sweep --limit 1`: all configured smoke runs.
-- `experiments/qwen3_mmlu/run.py sweep`: sequential local full MMLU sweep;
-  resumes by skipping configurations already recorded in its manifest.
-- `experiments/qwen3_mmlu/run.py sweep --detach`: same sweep in the detached
-  tmux session `vllm-qwen3-30b-a3b-sweep`, logging to `rounding-sweep.log`.
-  `sweep` runs only local rows (rows without `launcher="mls"`).
 - `experiments/qwen3_mmlu/run.py restart --round-activations-quantile 0.5
   --round-activations-site mlp`: per-token quantile zeroing (exclusive with eps).
 - `experiments/qwen3_mmlu/run.py job --name <row> [--limit N]`: MLSpace container
@@ -31,13 +40,12 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `/home/jovyan/.mlspace/envs/arkhip/bin/python
   experiments/qwen3_mmlu/run_jobs.py [--dry] [--filter S] [--limit N] [--force]`:
   submits one `a100.1gpu` job per pending row (`--filter` is a name glob, e.g.
-  `'chat_*'`); `--collect` writes `rounding-quantile-sweep.json` (harness rows
-  only) for `summarize_rounding.py`.
+  `'chat_*'`).
 - `experiments/qwen3_mmlu/run.py eval --name chat_baseline [--limit N]`: evaluate
   one registry row against the running server (it must serve the same zeroing).
-  Rows with `task="mmlu_stem_chat"` run `chat_eval.py run` instead of the harness:
-  chat template, 304 seeded STEM questions, greedy reasoning capped at 1024 tokens,
-  then a forced `[reasoning interrupted] Answer:` letter if needed.
+  Every row and the default config run `chat_eval.py run`: chat template, 304
+  seeded STEM questions, greedy reasoning capped at 1024 tokens, then a forced
+  `[reasoning interrupted] Answer:` letter if needed.
 - `experiments/qwen3_mmlu/chat_eval.py summarize [--filter GLOB]`: validate
   finished chat jobs and write `rounding-chat-sweep-summary.csv` with answer
   changes vs `chat_baseline`.
@@ -51,8 +59,7 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   `run_jobs.py --filter 'prof_*'`) zero one group at a time on chat_baseline's
   questions and re-score its responses; `experiments/qwen3_mmlu/sensitivity.py`
   writes `adaptive-profile.csv`/`adaptive-schedules.json` and prints schedules to
-  paste into `run.py` `ADAPTIVE_SCHEDULES`, which generates `adapt_*` (harness)
-  and `chat_adapt_*` rows.
+  paste into `run.py` `ADAPTIVE_SCHEDULES`, which generates `chat_adapt_*` rows.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
@@ -65,8 +72,6 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/validate_live.py capture`: preserve original-server
   deterministic completion/logprob reference; `check` validates instrumented
   completion/chat, concurrent requests, multiple prompts/choices, SSE, and errors.
-- `experiments/qwen3_mmlu/summarize_rounding.py --manifest <path>`: validate
-  sample scores/counts and export aggregate benchmark and per-layer CSVs.
 
 The rounding wrapper does not modify installed packages. Epsilon zero preserves
 original operands; block rounding tests the FP32 sum of hidden and residual
@@ -80,8 +85,8 @@ assigns unique request IDs to prevent statistics collisions.
 
 Configuration lives in the script's `experiment_configs`; lifecycle instructions
 and results live in `experiments/qwen3_mmlu/README.md` and `ROUNDING.md`.
-Artifacts are outside the checkout. Unnamed 5-shot fixed-epsilon rows run locally;
-named (`launcher="mls"`) rows, including the generative fixed-epsilon rows, run as
-MLSpace jobs from a per-commit snapshot of `experiments/qwen3_mmlu`, using
+Artifacts are outside the checkout. Every registry row is named
+(`launcher="mls"`) and runs as an MLSpace job from a per-commit snapshot of
+`experiments/qwen3_mmlu`, using
 `/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126` (`~/.mlspace` is not mounted
 in job containers). Domain terms are in `CONTEXT.md`; decisions in `docs/adr/`.

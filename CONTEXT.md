@@ -47,9 +47,16 @@ values that were already zero; quantile zeroing guarantees at least q of it in
 every token row.
 _Avoid_: sparsity (unqualified)
 
-**Local baseline**:
-The locally served full-MMLU run with the zeroing hook active and nothing zeroed
-(`mlp`, ε = 0; 81.98%), against which zeroing results are compared.
+**Generative evaluation**:
+Evaluation in which the model writes its answer through the chat template and
+the answer is parsed from the generated text; the only kind used from 2026-09-30
+(`docs/adr/0004`).
+_Avoid_: likelihood evaluation, 5-shot scoring (retired)
+
+**Local baseline** (historical):
+The locally served 5-shot letter-likelihood full-MMLU run with the zeroing hook
+active and nothing zeroed (`mlp`, ε = 0; 81.98%), against which the retired
+5-shot results were compared. New results compare with the chat baseline.
 _Avoid_: control, original run
 
 **Generative check**:

@@ -7,10 +7,11 @@ MMLU evaluation through its HTTP API.
 
 ## Setup
 
-`run.py:serve` launches inference; `run.py:evaluate` runs the evaluation.
+`run.py:serve` launches inference; `run.py:evaluate` runs the generative check
+(`chat_eval.py`). All evaluation is generative (`docs/adr/0004`).
 
-For the experimental activation-zeroing flag, response statistics, and separate
-MLP/block MMLU sweeps, see [ROUNDING.md](ROUNDING.md).
+For the experimental activation-zeroing flag, response statistics, and the
+zeroing arms, see [ROUNDING.md](ROUNDING.md).
 
 The OpenAI-compatible API is at **http://127.0.0.1:8000/v1**, with model name
 `Qwen/Qwen3-30B-A3B-Instruct-2507`. It binds only to this machine's loopback
@@ -43,36 +44,32 @@ Follow `server.log` there for startup errors and runtime logs.
 ## Evaluation
 
 The source of truth for model and evaluation settings is `run.py`.
-Evaluation uses EleutherAI lm-evaluation-harness through the running server's
-completions API, with plain completion prompts and answer-choice likelihoods.
-It does not apply a chat template. Full results contain all MMLU subjects,
-aggregate accuracy, per-subject accuracy, and individual samples.
+Evaluation is generative: `run.py eval` runs `chat_eval.py` against the running
+server with the model's chat template on 304 seeded MMLU STEM test questions
+(16 per subject), greedy, with reasoning capped at 1024 tokens and the answer
+letter parsed from the text (protocol in [ROUNDING.md](ROUNDING.md)).
 
 ```bash
-# Small end-to-end check, saved separately from full evaluations:
+# Small end-to-end check (1 question per subject), saved under chat-smoke/:
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py eval --limit 1
-# Full evaluation (foreground; leave the terminal/session open):
+# Full generative check (foreground; leave the terminal/session open), under chat/:
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py eval
 ```
 
-Dependencies: the existing vLLM environment, tmux, `lm_eval[api]==0.4.9.2`,
-and `datasets==3.6.0`. Evaluation uses the prepared local MMLU caches without
-Hub requests. These caches must be retained for future runs. The server stays
-running after evaluation finishes.
+Dependencies: the existing vLLM environment, tmux, and `datasets==3.6.0`.
+Evaluation uses the prepared local `cais/mmlu` cache without Hub requests; it must
+be retained for future runs. The server stays running after evaluation finishes.
 
 ## Results
 
-Completed on 2026-09-27: **81.9826% MMLU accuracy**, with **11,512 correct out
-of 14,042 questions** across all 57 subjects.
+Historical (5-shot letter-likelihood harness, removed 2026-09-30 with its
+artifacts; see `docs/adr/0004`). Completed on 2026-09-27: **81.9826% MMLU
+accuracy**, with **11,512 correct out of 14,042 questions** across all 57
+subjects.
 
 | Overall | Humanities | Social sciences | STEM | Other |
 |---:|---:|---:|---:|---:|
 | 81.98% | 75.11% | 90.06% | 82.84% | 83.52% |
-
-The artifact root contains `mmlu-summary.json` and `mmlu-summary.csv`.
-The JSON summary links to the complete harness report and per-question files.
-The successful run is under `mmlu/20260927-013947/`; its console log is
-`mmlu-final.log`.
 
 Verified all saved sample counts, unique question IDs within each subject,
 finite choice scores, predicted answers, and aggregate accuracy. The full run
@@ -90,3 +87,6 @@ was checked after evaluation and remains running in its detached tmux session.
 - 2026-09-27: Added local serving lifecycle commands and MMLU evaluation.
 - 2026-09-27: Completed and validated full MMLU; recorded results and confirmed
   the server remains available.
+- 2026-09-30: Evaluation is generative only; `run.py eval` runs the generative
+  check. Removed the likelihood harness path and deleted its artifacts
+  (`mmlu/`, `smoke/`, `mmlu-summary.*`, harness logs).

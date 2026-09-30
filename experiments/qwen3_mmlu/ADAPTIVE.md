@@ -24,9 +24,11 @@ All settings live in `run.py:experiment_configs` (`GROUPS`, `PROFILE_LEVELS`,
 - Stage B (`sensitivity.py`): cost = increase in per-token NLL of the reference
   responses; exhaustive search picks per-group levels meeting each budget at the
   lowest summed cost (group effects assumed additive).
-- Stage C (`adapt_*`, `chat_adapt_*` rows): adaptive schedules versus uniform
-  controls at the same mean (`mlp_q0.6`-`0.8`, `block_q0.3`-`0.5`) on full 5-shot
-  MMLU and on the chat check.
+- Stage C (`chat_adapt_*` rows): adaptive schedules versus uniform controls at
+  the same mean (`chat_mlp_q0.6`-`0.8`, `chat_block_q0.3`-`0.5`) on the chat
+  check. The 5-shot arms (`adapt_*`, `mlp_q*`, `block_q*`) were removed with the
+  likelihood harness on 2026-09-30 (`docs/adr/0004`); their results below are
+  history and their artifacts are deleted.
 
 Block levels are in 0.25 steps, so the 0.3 and 0.4 budgets are met at means of
 0.3125 and 0.40625, slightly above the uniform controls (a conservative bias
@@ -36,8 +38,8 @@ forced-answer suffix; the cost subtracts the unzeroed repeat's difference as
 noise, and ties go to the lower unclamped loss, then the more even schedule.
 
 Stage A tunes on the chat check's own questions (user decision), so Stage C's
-chat comparison is in-sample; the full 5-shot test (14,042 questions) is the
-largely independent check.
+chat comparison is in-sample; the historical full 5-shot test (14,042 questions)
+was the largely independent check.
 
 ## Results
 
@@ -93,7 +95,8 @@ at or near the noise floor up to 0.8, but that check is in-sample.
 
 Next: allocate with interactions (e.g. greedy steps that evaluate the full
 schedule), finer levels (e.g. block 0.35-0.45 on the tolerant first/last
-groups), or the validation-split likelihood proxy instead of the chat subset.
+groups), or a held-out generative question set so the chat comparison is no
+longer in-sample (evaluation is generative only, `docs/adr/0004`).
 
 ## Changelog
 
@@ -101,3 +104,5 @@ groups), or the validation-split likelihood proxy instead of the chat subset.
   allocation search implemented.
 - 2026-09-28: Stage A done; schedules registered and Stage C launched.
 - 2026-09-28: Stage C done; adaptive vs uniform recorded.
+- 2026-09-30: Removed the 5-shot `adapt_*` rows and their artifacts with the
+  likelihood harness; Stage C 5-shot results are kept as history.
