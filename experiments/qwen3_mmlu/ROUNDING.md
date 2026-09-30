@@ -215,6 +215,17 @@ letter-likelihood harness runs above.
 No answer was unparsed and no finished response lacked an answer line.
 Summary: `rounding-chat-sweep-summary.csv` in the artifact root.
 
+High mlp quantiles (commit `97a3a3e818`, same setup). "Forced" counts answers
+forced after the reasoning cap plus finished responses without an answer line
+(q0.99 only: 2).
+
+| Arm | Accuracy % | Natural / forced | Mean reasoning tokens | Changed (fixed/broken) | Total zero % |
+|---|---:|---:|---:|---:|---:|
+| chat_mlp_q0.8 | 91.12 | 300 / 4 | 175 | 15 (4/9) | 80.06–80.10 |
+| chat_mlp_q0.9 | 88.16 | 294 / 10 | 178 | 25 (3/17) | 90.03–90.07 |
+| chat_mlp_q0.95 | 86.51 | 285 / 19 | 233 | 32 (4/23) | 95.00–95.03 |
+| chat_mlp_q0.99 | 66.12 | 86 / 218 | 786 | 92 (3/84) | 99.00 |
+
 ## Conclusions
 
 Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
@@ -234,6 +245,10 @@ stay within the batching noise floor (9 changed answers between two identical
 baseline runs; accuracy within 1 pp). Block at 50% is unsafe for the chat
 model: -8.9 pp, 32 answers broken vs 5 fixed, 40% longer reasoning and nearly
 3x as many responses hitting the reasoning cap.
+
+Expert activations stay near the noise floor up to 80% zeroing in chat
+(-1.6 pp), then degrade: -4.6 pp at 90%, -6.3 pp at 95% (reasoning 13% longer,
+3x as many capped), and -26.6 pp at 99%, where 71% of responses hit the cap.
 
 ## Changelog
 
@@ -265,3 +280,4 @@ model: -8.9 pp, 32 answers broken vs 5 fixed, 40% longer reasoning and nearly
   a100.1gpu): chat_mlp_q0.9 lm-mpi-job-5b1acad0-3145-4762-98f0-c7ea0e0f2962,
   chat_mlp_q0.95 lm-mpi-job-3f0ebfc0-b52d-4c90-b15e-3a971a1a085c, chat_mlp_q0.99
   lm-mpi-job-400412f9-dd28-4e8c-9dc0-bc9bebfbab30.
+- 2026-09-30: High-quantile chat arms completed; recorded results.
