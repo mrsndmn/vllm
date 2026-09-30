@@ -299,3 +299,17 @@ Expert activations stay near the noise floor up to 80% zeroing in chat
 - 2026-09-30: Added the `moe_out` zeroing site (MoE output alone, residual stream
   untouched) and generative arms: fixed ε ∈ {0.01, 0.1, 0.5} at mlp, block, and
   moe_out, and moe_out q ∈ {0.4, 0.5} (spec from a deep interview).
+- 2026-09-30: moe_out live checks passed (ε = 0 parity, ε = 0.1, q = 0.5) and the
+  smoke job lm-mpi-job-08967001-23ab-45f5-8d0f-b7b3138b1693 completed. Launched
+  the generative ε and moe_out arms (commit `6ef774f2e1`, a100.1gpu):
+  chat_mlp_eps0.01 lm-mpi-job-9c69aca7-d391-4795-8548-8fb4247c5c2e,
+  chat_mlp_eps0.1 lm-mpi-job-23009a26-9474-47aa-8037-495f446f631e,
+  chat_mlp_eps0.5 lm-mpi-job-0b782684-0e0a-4769-ac2e-93a71d9cb162,
+  chat_block_eps0.01 lm-mpi-job-04cbd9f2-9cf4-43b8-9a7c-f1c417e2c59d,
+  chat_block_eps0.1 lm-mpi-job-fdf17cbc-b7f7-49c6-875d-f3b555e69363,
+  chat_block_eps0.5 lm-mpi-job-38bb021b-7295-4e1e-8624-2040d36f091e,
+  chat_moe_out_eps0.01 lm-mpi-job-d3124c8c-e225-4a57-8f0d-c46d4550df51,
+  chat_moe_out_eps0.1 lm-mpi-job-2b18341b-fc04-4f95-b140-cbaeffb90867,
+  chat_moe_out_eps0.5 lm-mpi-job-61761a02-0ee5-4b3a-8ed8-6faaea446f3a,
+  chat_moe_out_q0.4 lm-mpi-job-0f09bd35-c8bd-4d93-8162-5d3e167d570e,
+  chat_moe_out_q0.5 lm-mpi-job-200ef4e8-ea26-4ef7-b212-5d63ad4c20fc.
