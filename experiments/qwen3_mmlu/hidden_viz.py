@@ -48,6 +48,10 @@ DEFAULT_STATES = "0,8,16,24,32,40,48"
 DEFAULT_SKIP = 2
 # |x| bin edges of the per-state value distributions: 10 per decade, 1e-5 to 1e4.
 HIST_EDGES = 10.0 ** (np.arange(91) / 10 - 5)
+# Linear distributions: LINEAR_BINS bins over ± each site row's LINEAR_REACH
+# quantile of |x| (the few larger values, mostly massive activations, are left out).
+LINEAR_BINS = 201
+LINEAR_REACH = 0.995
 PLOTLY = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 TEMPLATE = Path(__file__).with_name("hidden_viz.html")
 
@@ -80,6 +84,16 @@ def value_histogram(rows):
     bins = bins.clamp(max=len(HIST_EDGES) - 1)
     index = (values >= 0).long() * len(HIST_EDGES) + bins
     return torch.bincount(index, minlength=2 * len(HIST_EDGES)).view(2, -1)
+
+
+def linear_histogram(rows):
+    """(counts [LINEAR_BINS], reach) of one site row's signed values on a linear
+    axis over [-reach, reach], reach being the row's LINEAR_REACH quantile of |x|
+    (its ceil(q * n)-th smallest); values beyond it are not counted."""
+    values = rows.float().flatten()
+    rank = max(math.ceil(LINEAR_REACH * values.numel()), 1)
+    reach = values.abs().kthvalue(rank).values.item() or 1e-30
+    return torch.histc(values, LINEAR_BINS, -reach, reach).long(), reach
 
 
 def pick(records):
@@ -248,8 +262,13 @@ def main():
             hist = torch.stack([value_histogram(row) for row in rows]).cpu()
             if hist.sum() != rows.numel():
                 raise RuntimeError(f"{site} histograms do not cover every value")
+            linear = [linear_histogram(row) for row in rows]
+            counts = torch.stack([row for row, _ in linear]).cpu()
+            reach = [value for _, value in linear]
             arrays[f"{key}_{site}_stats"] = stats.numpy()
             arrays[f"{key}_{site}_hist"] = hist.numpy()
+            arrays[f"{key}_{site}_linear"] = counts.numpy()
+            arrays[f"{key}_{site}_reach"] = np.array(reach)
             sites[site] = {
                 "rows": rows.shape[0],
                 "width": rows.shape[2],
@@ -257,6 +276,8 @@ def main():
                 "first_state": model.config.num_hidden_layers + 1 - rows.shape[0],
                 "stats": encode(stats.numpy()),
                 "hist": encode(hist.numpy(), "<i4"),
+                "linear": encode(counts.numpy(), "<i4"),
+                "reach": reach,
             }
         del activations
         # Position t predicts token t + 1; count model-written response tokens.
@@ -302,6 +323,8 @@ def main():
         "default_states": DEFAULT_STATES,
         "default_skip": DEFAULT_SKIP,
         "hist_edges": HIST_EDGES.tolist(),
+        "linear_bins": LINEAR_BINS,
+        "linear_reach": LINEAR_REACH,
     }
     np.savez_compressed(
         output / "stats.npz",

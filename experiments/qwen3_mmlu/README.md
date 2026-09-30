@@ -78,7 +78,8 @@ embedded:
 It needs the local GPU free of the vLLM server (~62 GB for bf16 weights). The
 HTML controls pick the sample, the site, the stat, and the states as a range expression
 (default `0,8,16,24,32,40,48`). To the right of each shown state is the distribution
-of all its values over the sample's tokens, as |x| (log axis) or signed x (symlog).
+of all its values over the sample's tokens: signed x on a linear axis (default) or
+|x| on a log axis.
 
 ## Results
 
@@ -114,3 +115,4 @@ was checked after evaluation and remains running in its detached tmux session.
 - 2026-09-30: Added the hidden-state viewer (`hidden_viz.py`).
 - 2026-09-30: Viewer shows per-state value distributions (|x| or signed).
 - 2026-09-30: Viewer covers five sites (block, residual, moe_out, experts, mlp).
+- 2026-09-30: Distributions default to a linear signed-x axis; log x is a toggle.

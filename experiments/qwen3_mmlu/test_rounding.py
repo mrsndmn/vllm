@@ -1044,8 +1044,8 @@ console.log(JSON.stringify({
   errors: ["", " ", "1-", "5-3", "49", "0-49", "a", "1,,2", "-1"].map(fails),
   signed: [transform("min", -99), untransform("min", transform("min", -99))],
   magnitude: [transform("q50", 100), transform("q50", 0), untransform("q50", -2)],
-  dist_abs: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], false),
-  dist_signed: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], true),
+  dist_abs: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100]),
+  dist_linear: linearDistribution([5, 0, 7, 1], 2),
   sites: [siteStates([0, 1, 8, 48], 1), siteStates([0, 8], 0)],
 }));
 """
@@ -1065,10 +1065,10 @@ console.log(JSON.stringify({
     assert [p["x"] for p in absolute] == pytest.approx([10**0.5, 10**1.5])
     assert [p["count"] for p in absolute] == [5, 2]
     assert [(p["lo"], p["hi"]) for p in absolute] == [(1, 10), (10, None)]
-    signed = result["dist_signed"]
-    assert [p["x"] for p in signed] == pytest.approx([-1.5, -0.5, 0, 0.5, 1.5])
-    assert [p["count"] for p in signed] == [2, 1, 3, 4, 0]
-    assert [p["sign"] for p in signed] == [-1, -1, 0, 1, 1]
+    linear = result["dist_linear"]
+    assert [p["x"] for p in linear] == pytest.approx([-0.75, -0.25, 0.25, 0.75])
+    assert [(p["lo"], p["hi"]) for p in linear] == [(-2, -1), (-1, 0), (0, 1), (1, 2)]
+    assert [p["count"] for p in linear] == [5, 0, 7, 1]
     assert result["sites"] == [
         {"shown": [1, 8, 48], "dropped": [0]},
         {"shown": [0, 8], "dropped": []},
@@ -1109,6 +1109,15 @@ def test_viewer_value_histogram_bins_by_sign_and_log_magnitude():
     positive = {i: n for i, n in enumerate(counts[1].tolist()) if n}
     assert negative == {51: 1, 85: 1}
     assert positive == {0: 3, 51: 1, 52: 1, 90: 1}
+
+
+def test_viewer_linear_histogram_spans_the_rows_quantile_of_magnitudes():
+    values = torch.arange(1.0, 1001.0).view(10, 100)
+    values[::2] *= -1
+    counts, reach = hidden_viz.linear_histogram(values)
+    # ceil(0.995 * 1000)-th smallest |x| is 995; |x| > 995 falls outside the range.
+    assert reach == 995 and counts.shape == (hidden_viz.LINEAR_BINS,)
+    assert counts.sum() == 995
 
 
 class CharTokenizer:

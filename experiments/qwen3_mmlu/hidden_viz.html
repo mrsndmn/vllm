@@ -43,6 +43,8 @@
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   /* The figure is at least 1200 px wide (see MIN_WIDTH); scroll when narrower. */
   .figure { overflow-x: auto; }
+  .controls label.check { flex-direction: row; align-items: center; gap: 6px;
+    padding-bottom: 6px; }
   .site-note { color: var(--text-2); font-size: 12px; margin-top: 8px; }
 </style>
 </head>
@@ -58,10 +60,8 @@
       placeholder="e.g. 1-8,15,40-48" title="Comma-separated states and ranges a-b, e.g. 1-8,15,40-48"></label>
   <label><span class="hint">Leading tokens left out of colour range</span>
     <input id="skip" type="number" min="0" step="1"></label>
-  <label>Distribution (right) <select id="dist">
-    <option value="abs">|x| (log)</option>
-    <option value="signed">signed x (symlog)</option>
-  </select></label>
+  <label class="check"><input id="logx" type="checkbox">
+    Distribution (right): log x (|x|)</label>
 </div>
 <div class="site-note" id="site-note"></div>
 <div class="error" id="error" role="alert"></div>
@@ -100,11 +100,14 @@
   ~1400) that would otherwise set it; their cells are still drawn, clamped. Hover any
   cell for the raw values of all nine stats.</p>
   <p>Distribution (right of the heatmap, one ridge per shown state): all values of that
-  site row over every token of the sample (tokens × n), counted in log-spaced
-  |x| bins (10 per decade from 1e-5 to 1e4; smaller magnitudes and zeros share the
-  centre bin of the signed view and are left out of the |x| view). Each ridge is
-  scaled to its own tallest bin; hover a point for the bin's share of all values.
-  The signed view places ±x at ±(log10|x| + 5), so 0 marks |x| &lt; 1e-5.</p>
+  site row over every token of the sample (tokens × n). Default: signed x on a linear
+  axis, 201 bins over ±R, where R (printed on each ridge) is that row's 99.5th
+  percentile of |x|; each ridge is scaled to its own R, so the axis reads x / R, and the
+  0.5% of values beyond R (mostly massive activations) are left out. Log x: |x| on a log
+  axis in log-spaced bins (10 per decade from 1e-5 to 1e4; smaller magnitudes and zeros
+  are left out); per log bin, any distribution peaked at 0 looks like it falls off
+  towards 0. Each ridge is scaled to its own tallest bin; hover a point for the bin's
+  share of all values.</p>
 </details>
 
 <script type="application/json" id="data">%%DATA%%</script>
@@ -138,10 +141,6 @@ function untransform(stat, z) {
   return 10 ** z;
 }
 
-// Points of one state's value distribution from sign-split |x| bin counts
-// (bin 0: |x| < edges[0]; bin i: edges[i-1] <= |x| < edges[i]; the last is open).
-// |x| view: bin i >= 1 at its geometric centre (log axis), bin 0 left out. Signed
-// view: x mapped to sign(x) * (log10|x| - log10 edges[0]), bin 0 at 0.
 // States a site can show: per-layer sites have no state 0 (the embedding).
 function siteStates(states, first) {
   return {
@@ -150,25 +149,29 @@ function siteStates(states, first) {
   };
 }
 
-function distribution(negative, positive, edges, signed) {
+// Points of one state's |x| distribution from sign-split |x| bin counts
+// (bin 0: |x| < edges[0]; bin i: edges[i-1] <= |x| < edges[i]; the last is open):
+// bin i >= 1 at its geometric centre (log axis); bin 0 is left out.
+function distribution(negative, positive, edges) {
   const last = edges.length - 1;
-  const bin = (i, sign) => ({
-    lo: i ? edges[i - 1] : 0,
-    hi: i === last ? Infinity : edges[i],
-    sign,
-  });
-  const at = (i) => Math.log10(Math.sqrt(edges[i - 1] * edges[i])) - Math.log10(edges[0]);
   const points = [];
-  if (!signed) {
-    for (let i = 1; i <= last; i++) {
-      points.push({ x: Math.sqrt(edges[i - 1] * edges[i]), count: negative[i] + positive[i], ...bin(i, 0) });
-    }
-    return points;
+  for (let i = 1; i <= last; i++) {
+    points.push({
+      x: Math.sqrt(edges[i - 1] * edges[i]), count: negative[i] + positive[i],
+      lo: edges[i - 1], hi: i === last ? Infinity : edges[i],
+    });
   }
-  for (let i = last; i >= 1; i--) points.push({ x: -at(i), count: negative[i], ...bin(i, -1) });
-  points.push({ x: 0, count: negative[0] + positive[0], lo: 0, hi: edges[0], sign: 0 });
-  for (let i = 1; i <= last; i++) points.push({ x: at(i), count: positive[i], ...bin(i, 1) });
   return points;
+}
+
+// Points of one state's signed distribution from equal-width bins over
+// [-reach, reach], at their centres in units of reach (so x runs from -1 to 1).
+function linearDistribution(counts, reach) {
+  const width = 2 / counts.length;
+  return Array.from(counts, (count, i) => ({
+    x: -1 + width * (i + 0.5), count, lo: reach * (-1 + width * i),
+    hi: reach * (-1 + width * (i + 1)),
+  }));
 }
 </script>
 <script>
@@ -185,7 +188,7 @@ const DIVERGING = [
   [0.6, "#f2b0ab"], [0.8, "#e34948"], [1, "#8c1d1d"],
 ];
 const els = Object.fromEntries(
-  ["meta", "sample", "site", "stat", "states", "skip", "dist", "site-note", "error", "info",
+  ["meta", "sample", "site", "stat", "states", "skip", "logx", "site-note", "error", "info",
     "figure", "heatmap"].map(
     (id) => [id, document.getElementById(id)]
   )
@@ -218,7 +221,10 @@ const samples = DATA.samples.map((sample) => ({
   ...sample,
   sites: Object.fromEntries(Object.entries(sample.sites).map(([name, site]) => [
     name,
-    { ...site, values: decode(site.stats), hist: decode(site.hist, Int32Array) },
+    {
+      ...site, values: decode(site.stats), hist: decode(site.hist, Int32Array),
+      linear: decode(site.linear, Int32Array),
+    },
   ])),
   labels: sample.tokens.map((token) => escapeHtml(JSON.stringify(token))),
 }));
@@ -283,25 +289,38 @@ const EDGES = DATA.hist_edges;
 // Heatmap, colorbar, and distribution panel overlap below this plot width.
 const MIN_WIDTH = 1200;
 
-function binLabel(point) {
-  if (point.lo === 0) return `|x| < ${fmt(point.hi)}`;
-  const range = point.hi === Infinity
-    ? `≥ ${fmt(point.lo)}` : `${fmt(point.lo)} – ${fmt(point.hi)}`;
-  return `${["x < 0, ", "", "x ≥ 0, "][point.sign + 1]}|x| ${range}`;
+function binLabel(point, log) {
+  if (!log) return `x ${fmt(point.lo)} – ${fmt(point.hi)}`;
+  return point.hi === Infinity
+    ? `|x| ≥ ${fmt(point.lo)}` : `|x| ${fmt(point.lo)} – ${fmt(point.hi)}`;
 }
 
 // One ridge per shown state (row), scaled to its tallest bin, on the x2 axis.
-function ridges(site, name, states, signed) {
+// Linear view: each row's own ±R range, labelled on the ridge.
+function ridges(site, name, states, log) {
   const size = EDGES.length;
+  const bins = DATA.linear_bins;
   const traces = [];
+  const labels = [];
   let low = Infinity;
   let high = -Infinity;
   states.forEach((state, row) => {
-    const base = (state - site.first_state) * 2 * size;
+    const index = state - site.first_state;
+    const base = index * 2 * size;
     const negative = site.hist.subarray(base, base + size);
     const positive = site.hist.subarray(base + size, base + 2 * size);
     const total = negative.reduce((a, b) => a + b, 0) + positive.reduce((a, b) => a + b, 0);
-    const points = distribution(negative, positive, EDGES, signed);
+    const reach = site.reach[index];
+    const points = log
+      ? distribution(negative, positive, EDGES)
+      : linearDistribution(site.linear.subarray(index * bins, (index + 1) * bins), reach);
+    if (!log) {
+      labels.push({
+        xref: "x2", yref: "y", x: 1, y: row + 0.42, text: `±${fmt(reach)}`,
+        showarrow: false, xanchor: "right", yanchor: "top",
+        font: { size: 9, color: "#52514e" },
+      });
+    }
     const peak = Math.max(...points.map((point) => point.count)) || 1;
     for (const point of points) {
       if (point.count) {
@@ -313,7 +332,7 @@ function ridges(site, name, states, signed) {
     const x = points.map((point) => point.x);
     const y = points.map((point) => floor + (0.9 * point.count) / peak);
     const custom = points.map((point) => [
-      `${name} ${stateLabel(state, name)}`, binLabel(point),
+      `${name} ${stateLabel(state, name)}`, binLabel(point, log),
       ((100 * point.count) / total).toPrecision(3),
     ]);
     traces.push({
@@ -333,39 +352,32 @@ function ridges(site, name, states, signed) {
       showlegend: false,
     });
   });
-  return { traces, low, high };
+  return { traces, labels, low, high };
 }
 
-function distributionAxis(signed, low, high, tokens) {
+function distributionAxis(log, low, high, tokens) {
   const axis = {
     domain: [0.79, 1],
     anchor: "y",
     automargin: true,
     tickangle: 0,
     tickfont: { size: 10 },
-    title: { text: `${signed ? "x (symlog)" : "|x| (log)"}, all ${tokens} tokens` },
+    title: {
+      text: log ? `|x| (log), all ${tokens} tokens` : `x / R (linear), all ${tokens} tokens`,
+    },
     showgrid: false,
     color: "#52514e",
   };
-  if (!Number.isFinite(low)) [low, high] = signed ? [-1, 1] : [1e-3, 1];
-  if (!signed) {
+  if (!log) {
     return {
-      ...axis, type: "log", dtick: 2, exponentformat: "power", zeroline: false,
-      range: [Math.log10(low) - 0.15, Math.log10(high) + 0.15],
+      ...axis, range: [-1.05, 1.05], tickvals: [-1, -0.5, 0, 0.5, 1],
+      ticktext: ["−R", "−R/2", "0", "R/2", "R"], zeroline: true, zerolinecolor: "#c9c8c3",
     };
   }
-  const offset = Math.log10(EDGES[0]);
-  const reach = Math.max(Math.abs(low), Math.abs(high)) + 0.3;
-  const tickvals = [0];
-  const ticktext = ["0"];
-  for (let k = Math.ceil(offset) + 2; k - offset <= reach; k += 3) {
-    const power = k ? `1e${k}` : "1";
-    tickvals.push(-(k - offset), k - offset);
-    ticktext.push(`−${power}`, power);
-  }
+  if (!Number.isFinite(low)) [low, high] = [1e-3, 1];
   return {
-    ...axis, range: [-reach, reach], tickvals, ticktext,
-    zeroline: true, zerolinecolor: "#c9c8c3",
+    ...axis, type: "log", dtick: 2, exponentformat: "power", zeroline: false,
+    range: [Math.log10(low) - 0.15, Math.log10(high) + 0.15],
   };
 }
 
@@ -461,8 +473,8 @@ function draw() {
       ...ticks(stat, low, high),
     },
   };
-  const signed = els.dist.value === "signed";
-  const ridge = ridges(site, name, states, signed);
+  const log = els.logx.checked;
+  const ridge = ridges(site, name, states, log);
   const boundary = sample.prompt_tokens - 0.5;
   const layout = {
     // Token zoom survives stat/state/skip changes; rows reset with the states.
@@ -480,8 +492,8 @@ function draw() {
       showgrid: false, zeroline: false, color: "#52514e",
     },
     xaxis2: {
-      ...distributionAxis(signed, ridge.low, ridge.high, count),
-      uirevision: `${index}|${name}|${states}|${signed}`,
+      ...distributionAxis(log, ridge.low, ridge.high, count),
+      uirevision: `${index}|${name}|${states}|${log}`,
     },
     yaxis: {
       tickmode: "array",
@@ -498,7 +510,7 @@ function draw() {
     annotations: [{
       x: boundary, yref: "paper", y: 1, text: "response →", showarrow: false,
       xanchor: "left", yanchor: "bottom", font: { size: 11, color: "#52514e" },
-    }],
+    }, ...ridge.labels],
     hoverlabel: {
       bgcolor: "#ffffff", bordercolor: "#c9c8c3", align: "left",
       font: { color: "#0b0b0b", family: "ui-monospace, Menlo, monospace", size: 12 },
@@ -517,7 +529,7 @@ els.sample.addEventListener("change", () => {
 els.site.addEventListener("change", draw);
 els.stat.addEventListener("change", draw);
 els.skip.addEventListener("input", draw);
-els.dist.addEventListener("change", draw);
+els.logx.addEventListener("change", draw);
 let resizing;
 let drawnWidth = 0;
 // Follows the figure's own width (window resizes, page scrollbars appearing).
