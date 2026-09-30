@@ -136,87 +136,29 @@ def test_api_attaches_statistics_after_fragmented_response(
     assert not messages[-1].get("more_body", False)
 
 
-def fake_sweep(tmp_path, monkeypatch):
-    evaluated = []
-
-    def evaluate(limit):
-        output = tmp_path / f"run-{len(evaluated)}"
-        output.mkdir()
-        (output / "experiment.json").write_text(json.dumps(run.CONFIG))
-        evaluated.append(dict(run.CONFIG))
-        return output
-
-    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
-    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
-    for name in ("stop", "start", "wait_ready"):
-        monkeypatch.setattr(run, name, lambda: None)
-    monkeypatch.setattr(run, "evaluate", evaluate)
-    return evaluated
-
-
-def record(tmp_path, name, config, limit=None):
-    output = tmp_path / name
-    output.mkdir()
-    (output / "experiment.json").write_text(json.dumps(config))
-    entry = {
-        "site": config["round_activations_site"],
-        "epsilon": config["round_activations_eps"],
-        "output": str(output),
-    }
-    return entry | ({"limit": limit} if limit else {})
-
-
-def test_sweep_resumes_only_unrecorded_configs(tmp_path, monkeypatch):
-    evaluated = fake_sweep(tmp_path, monkeypatch)
-    done = run.experiment_configs[1]
-    manifest = tmp_path / "rounding-sweep.json"
-    manifest.write_text(json.dumps([record(tmp_path, "old", done)]))
-    run.sweep(None)
-    assert done not in evaluated
-    local = [c for c in run.experiment_configs if c.get("launcher") != "mls"]
-    assert evaluated == [c for c in local if c != done]
-    entries = json.loads(manifest.read_text())
-    assert entries[0]["output"] == str(tmp_path / "old")
-    stored = [
-        json.loads((run.Path(e["output"]) / "experiment.json").read_text())
-        for e in entries
-    ]
-    assert sorted(map(json.dumps, stored)) == sorted(map(json.dumps, local))
-    run.sweep(None)
-    assert len(evaluated) == len(local) - 1
-
-
-@pytest.mark.parametrize("mismatch", ["config", "limit"])
-def test_sweep_rejects_foreign_manifest_entries(tmp_path, monkeypatch, mismatch):
-    evaluated = fake_sweep(tmp_path, monkeypatch)
-    config = dict(run.experiment_configs[0])
-    if mismatch == "config":
-        config["round_activations_eps"] = 0.5
-    entry = record(tmp_path, "old", config, limit=1 if mismatch == "config" else 2)
-    (tmp_path / "rounding-smoke.json").write_text(json.dumps([entry]))
-    with pytest.raises(RuntimeError, match="unconfigured"):
-        run.sweep(1)
-    assert evaluated == []
-
-
-def test_server_session_checks_ignore_prefixed_sweep_session(tmp_path, monkeypatch):
+def test_server_session_checks_ignore_prefixed_sessions(tmp_path, monkeypatch):
     monkeypatch.delenv("TMUX", raising=False)
     monkeypatch.setenv("TMUX_TMPDIR", str(tmp_path))
     monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG, session="srv"))
+
+    def other_alive():
+        command = ["tmux", "has-session", "-t", "=srv-other"]
+        return subprocess.run(command, capture_output=True).returncode == 0
+
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", "srv-sweep", "sleep 600"], check=True
+        ["tmux", "new-session", "-d", "-s", "srv-other", "sleep 600"], check=True
     )
     try:
-        assert run.session_exists("srv-sweep")
         assert not run.session_exists()
         run.stop()
-        assert run.session_exists("srv-sweep")
+        assert other_alive()
         subprocess.run(
             ["tmux", "new-session", "-d", "-s", "srv", "sleep 600"], check=True
         )
+        assert run.session_exists()
         run.stop()
         assert not run.session_exists()
-        assert run.session_exists("srv-sweep")
+        assert other_alive()
     finally:
         subprocess.run(["tmux", "kill-server"], check=False)
 
@@ -266,32 +208,23 @@ def test_invalid_quantile_is_rejected(value):
         validate_quantile(value)
 
 
-def test_registry_keeps_fixed_eps_rows_and_adds_named_quantile_jobs():
-    jobs = [
-        c
-        for c in run_jobs.job_configs()
-        if c["task"] == "mmlu" and not c["name"].startswith("adapt_")
-    ]
-    assert [c["name"] for c in jobs] == [
-        "mlp_q0.25",
-        "mlp_q0.5",
-        "mlp_q0.6",
-        "mlp_q0.7",
-        "mlp_q0.8",
-        "block_q0.25",
-        "block_q0.3",
-        "block_q0.4",
-        "block_q0.5",
-    ]
-    for config in jobs:
-        assert config["round_activations_eps"] == 0
-        assert config["python"] == run.JOB_PYTHON
-    fixed = [c for c in run.experiment_configs if c.get("launcher") != "mls"]
-    assert all(
-        set(c)
-        == set(run.BASE_CONFIG) | {"round_activations_site", "round_activations_eps"}
-        for c in fixed
+def test_registry_is_generative_only():
+    assert run.CONFIG["task"] == run.BASE_CONFIG["task"] == chat_eval.TASK
+    assert "fewshot" not in run.BASE_CONFIG
+    assert (
+        dict(
+            run.BASE_CONFIG,
+            launcher="mls",
+            instance_type="a100.1gpu",
+            python=run.JOB_PYTHON,
+        )
+        == run.CHAT_CONFIG
     )
+    names = [c["name"] for c in run.experiment_configs]
+    assert len(names) == len(set(names)) == len(run_jobs.job_configs())
+    for config in run.experiment_configs:
+        assert config["name"].startswith(("chat_", "prof_"))
+        assert {k: config[k] for k in run.CHAT_CONFIG} == run.CHAT_CONFIG
 
 
 class FakeServer:
@@ -317,8 +250,8 @@ def test_job_stops_server_and_writes_marker_last(tmp_path, monkeypatch, fail):
         servers.append(FakeServer(command, **kwargs))
         return servers[-1]
 
-    def evaluate(limit, output, workdir):
-        assert not (run.job_root("mlp_q0.5", 1) / "done.json").exists()
+    def evaluate(limit, output):
+        assert not (run.job_root("chat_mlp_q0.5", 1) / "done.json").exists()
         if fail:
             raise RuntimeError("evaluation failed")
         return output
@@ -328,14 +261,14 @@ def test_job_stops_server_and_writes_marker_last(tmp_path, monkeypatch, fail):
     monkeypatch.setattr(run.subprocess, "Popen", popen)
     monkeypatch.setattr(run, "wait_ready", lambda alive: alive())
     monkeypatch.setattr(run, "evaluate", evaluate)
-    marker = run.job_root("mlp_q0.5", 1) / "done.json"
-    assert marker.parent != run.job_root("mlp_q0.5", 2)
+    marker = run.job_root("chat_mlp_q0.5", 1) / "done.json"
+    assert marker.parent != run.job_root("chat_mlp_q0.5", 2)
     if fail:
         with pytest.raises(RuntimeError, match="evaluation failed"):
-            run.job("mlp_q0.5", 1)
+            run.job("chat_mlp_q0.5", 1)
         assert not marker.exists()
     else:
-        run.job("mlp_q0.5", 1)
+        run.job("chat_mlp_q0.5", 1)
         done = json.loads(marker.read_text())
         assert done["quantile"] == 0.5 and done["site"] == "mlp"
         assert done["limit"] == 1 and done["output"].endswith("/mmlu")
@@ -367,27 +300,27 @@ def launch_args(**kwargs):
 
 
 def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkeypatch):
-    queued = [run_jobs.job_desc(run_jobs.job_configs("block_q0.5")[0], None)]
+    queued = [run_jobs.job_desc(run_jobs.job_configs("chat_block_q0.5")[0], None)]
     submitted = fake_mls(monkeypatch, tmp_path, [queued[0] + " #other @someone"])
-    done = run.job_root("mlp_q0.25", None)
+    done = run.job_root("chat_mlp_q0.25", None)
     done.mkdir(parents=True)
     (done / "done.json").write_text("{}")
     assert run_jobs.launch(launch_args(dry=True)) == [] and submitted == []
     launched = run_jobs.launch(launch_args())
-    skipped = {"mlp_q0.25", "block_q0.5"}
+    skipped = {"chat_mlp_q0.25", "chat_block_q0.5"}
     pending = [c["name"] for c in run_jobs.job_configs() if c["name"] not in skipped]
     assert [job["name"] for job in launched] == pending
     body = submitted[0]
     assert body["instance_type"] == "a100.1gpu" and body["region"] == "SR004"
     workdir = tmp_path / "staging" / "abc123" / run_jobs.SUBDIR
     assert body["script"] == (
-        f"cd {workdir} && {run.JOB_PYTHON} run.py job --name mlp_q0.5"
+        f"cd {workdir} && {run.JOB_PYTHON} run.py job --name chat_baseline"
     )
-    smoke = run_jobs.launch(launch_args(filter="mlp_q0.25", limit=1))
-    assert submitted[-1]["script"].endswith("--name mlp_q0.25 --limit 1")
+    smoke = run_jobs.launch(launch_args(filter="chat_mlp_q0.25", limit=1))
+    assert submitted[-1]["script"].endswith("--name chat_mlp_q0.25 --limit 1")
     assert "smoke1" in smoke[0]["desc"]
-    forced = run_jobs.launch(launch_args(filter="mlp_q0.25", force=True))
-    assert [job["name"] for job in forced] == ["mlp_q0.25"]
+    forced = run_jobs.launch(launch_args(filter="chat_mlp_q0.25", force=True))
+    assert [job["name"] for job in forced] == ["chat_mlp_q0.25"]
     assert [c["name"] for c in run_jobs.job_configs("chat_*_q0.5")] == [
         "chat_mlp_q0.5",
         "chat_block_q0.5",
@@ -419,18 +352,6 @@ def test_stage_extracts_only_the_committed_experiment_directory(tmp_path, monkey
     other = run_jobs.git("rev-parse", "HEAD~1").strip()
     assert run_jobs.stage(other) == tmp_path / other / run_jobs.SUBDIR
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted([commit, other])
-
-
-def test_summary_reports_total_zero_share_and_rejects_empty_manifest(
-    tmp_path, monkeypatch
-):
-    import summarize_rounding
-
-    manifest = tmp_path / "empty.json"
-    manifest.write_text("[]")
-    monkeypatch.setattr("sys.argv", ["summarize", "--manifest", str(manifest)])
-    with pytest.raises(SystemExit, match="No completed runs"):
-        summarize_rounding.main()
 
 
 @pytest.mark.parametrize(
@@ -554,7 +475,7 @@ def test_question_sample_is_seeded_per_subject():
     assert [r["index"] for r in other] != [r["index"] for r in first]
 
 
-def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
+def test_chat_registry_rows():
     chat = [
         c
         for c in run.experiment_configs
@@ -586,13 +507,6 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
     assert {k: v for k, v in chat[1].items() if k != "name"} == {
         k: v for k, v in chat[0].items() if k != "name"
     }
-    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
-    monkeypatch.setattr(run_jobs, "MANIFEST", tmp_path / "manifest.json")
-    for name in ("mlp_q0.5", "chat_mlp_q0.5"):
-        run.job_root(name, None).mkdir(parents=True)
-        (run.job_root(name, None) / "done.json").write_text(json.dumps({"n": name}))
-    run_jobs.collect()
-    assert json.loads((tmp_path / "manifest.json").read_text()) == [{"n": "mlp_q0.5"}]
 
 
 def test_generative_eps_and_moe_out_rows():
@@ -665,30 +579,49 @@ def test_run_cli_site_choices_match_rounding_sites():
     assert "--round-activations-site {" + ",".join(SITES) + "}" in help_text
 
 
-def test_evaluate_routes_chat_rows_to_chat_eval(tmp_path, monkeypatch):
-    commands = []
+def fake_eval_server(tmp_path, monkeypatch, served):
+    calls = []
     monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
     monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
-    run.select("chat_block_q0.5")
-    served = {"site": "block", "epsilon": 0.0, "quantile": 0.5}
     monkeypatch.setattr(run, "status", lambda: None)
     monkeypatch.setattr(
         run, "get_json", lambda path: served if "config" in path else {"layers": []}
     )
     monkeypatch.setattr(
-        run.subprocess, "run", lambda command, **kwargs: commands.append(command)
+        run.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
     )
-    output = run.evaluate(2, tmp_path / "out", tmp_path / "runtime")
-    command = commands[0]
+    return calls
+
+
+def test_evaluate_routes_chat_rows_to_chat_eval(tmp_path, monkeypatch):
+    served = {"site": "block", "epsilon": 0.0, "quantile": 0.5}
+    calls = fake_eval_server(tmp_path, monkeypatch, served)
+    run.select("chat_block_q0.5")
+    output = run.evaluate(2, tmp_path / "out")
+    command, kwargs = calls[0]
     assert command[:3] == [
         run.JOB_PYTHON,
         str(run.SCRIPT.with_name("chat_eval.py")),
         "run",
     ]
     assert command[command.index("--limit") + 1] == "2"
+    assert kwargs["cwd"] == output and kwargs["env"]["HF_DATASETS_OFFLINE"] == "1"
     stored = json.loads((output / "experiment.json").read_text())
     assert stored["name"] == "chat_block_q0.5"
     assert (output / "rounding-after.json").exists()
+
+
+def test_default_eval_is_generative_and_other_tasks_are_rejected(tmp_path, monkeypatch):
+    calls = fake_eval_server(tmp_path, monkeypatch, None)
+    output = run.evaluate(1)
+    assert output.parent == tmp_path / "chat-smoke"
+    assert calls[0][0][1] == str(run.SCRIPT.with_name("chat_eval.py"))
+    stored = json.loads((output / "experiment.json").read_text())
+    assert stored["task"] == chat_eval.TASK
+    run.CONFIG["task"] = "mmlu"
+    with pytest.raises(RuntimeError, match="generative"):
+        run.evaluate(1)
+    assert len(calls) == 1
 
 
 def write_chat_run(root, name, predictions):
@@ -1022,14 +955,14 @@ def test_allocation_ties_are_deterministic_and_even():
     assert block["mean"] == 0.3125
 
 
-def test_adaptive_rows_build_harness_and_chat_rows(monkeypatch):
+def test_adaptive_rows_are_chat_only(monkeypatch):
     schedule = [0.75, 0, 0.5, 0.75, 0.5, 0.75, 0.25, 0.5]
     rows = run.adaptive_rows({("block", 0.5): schedule})
-    assert [r["name"] for r in rows] == ["adapt_block_b0.5", "chat_adapt_block_b0.5"]
-    harness, chat = rows
-    assert harness["task"] == "mmlu" and harness["launcher"] == "mls"
+    assert [r["name"] for r in rows] == ["chat_adapt_block_b0.5"]
+    (chat,) = rows
     assert chat["task"] == "mmlu_stem_chat" and "chat_reference" not in chat
-    monkeypatch.setattr(run, "CONFIG", dict(harness))
+    assert chat["launcher"] == "mls"
+    monkeypatch.setattr(run, "CONFIG", dict(chat))
     args = run.rounding_args()
     assert args[args.index("--round-activations-quantiles") + 1] == (
         "0.75,0,0.5,0.75,0.5,0.75,0.25,0.5"
@@ -1069,4 +1002,4 @@ def test_registered_adaptive_schedules_meet_their_budgets():
         assert set(schedule) <= {0.0, *run.PROFILE_LEVELS[site]}
         assert sum(schedule) / run.GROUPS >= budget - 1e-9
     names = [c["name"] for c in run_jobs.job_configs("*adapt_*")]
-    assert len(names) == 2 * len(run.ADAPTIVE_SCHEDULES) == len(set(names))
+    assert len(names) == len(run.ADAPTIVE_SCHEDULES) == len(set(names))

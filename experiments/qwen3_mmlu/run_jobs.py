@@ -1,6 +1,7 @@
 """Submit MLSpace jobs for run.py registry rows with launcher="mls".
 
-Each job serves one row inside its container (`run.py job`) and evaluates MMLU.
+Each job serves one row inside its container (`run.py job`) and runs the
+generative MMLU STEM check (`chat_eval.py`).
 Run with the environment that provides the shared `mls` client, e.g.
 /home/jovyan/.mlspace/envs/arkhip/bin/python experiments/qwen3_mmlu/run_jobs.py --dry
 """
@@ -19,7 +20,6 @@ import run
 
 SUBDIR = "experiments/qwen3_mmlu"
 STAGING_ROOT = run.ARTIFACTS / "staging"
-MANIFEST = run.ARTIFACTS / "rounding-quantile-sweep.json"
 PROFILE = "default"
 QUEUE = "fusionbrainlab-job"
 BASE_IMAGE = "cr.ai.cloud.ru/aicloud-base-images/py3.12-torch2.7.0:0.0.41"
@@ -115,20 +115,6 @@ def connect():
     return extra["region"], queued, submit
 
 
-def collect():
-    """Write a summarize_rounding.py manifest from completed full-run markers."""
-    entries = []
-    for config in job_configs():
-        if config["task"] != "mmlu":  # chat rows: chat_eval.py summarize
-            continue
-        marker = run.job_root(config["name"], None) / "done.json"
-        if marker.exists():
-            entries.append(json.loads(marker.read_text()))
-    MANIFEST.write_text(json.dumps(entries, indent=2) + "\n")
-    total = sum(config["task"] == "mmlu" for config in job_configs())
-    print(f"{len(entries)}/{total} completed: {MANIFEST}")
-
-
 def launch(args):
     configs = job_configs(args.filter)
     if not configs:
@@ -168,16 +154,10 @@ def main():
     parser.add_argument("--force", action="store_true", help="Ignore done markers")
     parser.add_argument("--filter", help="Glob over experiment names, e.g. 'chat_*'")
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
-    parser.add_argument(
-        "--collect", action="store_true", help="Write the completed-runs manifest"
-    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
-    if args.collect:
-        collect()
-    else:
-        launch(args)
+    launch(args)
 
 
 if __name__ == "__main__":

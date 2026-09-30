@@ -1,4 +1,4 @@
-"""Local persistent Qwen3 serving and a reproducible MMLU evaluation."""
+"""Local persistent Qwen3 serving and the generative MMLU STEM evaluation."""
 
 import argparse
 import json
@@ -132,10 +132,10 @@ experiment_configs += [
     for quantile in levels
 ]
 # Stage C: schedules chosen by sensitivity.py from Stage A (filled after Stage A),
-# keyed by (site, budget = mean zero share); each gets a harness and a chat row.
+# keyed by (site, budget = mean zero share); each gets a chat row.
 # From sensitivity.py on the prof_* runs (commit 747cfb715b); see
 # adaptive-schedules.json. Block at 0.5 allocated [0.5] * 8, i.e. the existing
-# uniform block_q0.5 rows, so it has no separate adaptive row.
+# uniform chat_block_q0.5 row, so it has no separate adaptive row.
 ADAPTIVE_SCHEDULES = {
     ("mlp", 0.6): [0.75, 0.75, 0.75, 0.5, 0.75, 0.5, 0.5, 0.5],
     ("mlp", 0.7): [0.75, 0.75, 0.75, 0.5, 0.75, 0.75, 0.75, 0.75],
@@ -146,26 +146,17 @@ ADAPTIVE_SCHEDULES = {
 
 
 def adaptive_rows(schedules):
-    rows = []
-    for (site, budget), schedule in schedules.items():
-        adaptive = dict(
+    return [
+        dict(
+            CHAT_CONFIG,
+            name=f"chat_adapt_{site}_b{budget:g}",
             round_activations_site=site,
             round_activations_eps=0.0,
             round_activations_quantile=0.0,
             round_activations_quantiles=list(schedule),
         )
-        rows += [
-            dict(
-                BASE_CONFIG,
-                **adaptive,
-                name=f"adapt_{site}_b{budget:g}",
-                launcher="mls",
-                instance_type="a100.1gpu",
-                python=JOB_PYTHON,
-            ),
-            dict(CHAT_CONFIG, **adaptive, name=f"chat_adapt_{site}_b{budget:g}"),
-        ]
-    return rows
+        for (site, budget), schedule in schedules.items()
+    ]
 
 
 experiment_configs += adaptive_rows(ADAPTIVE_SCHEDULES)
@@ -198,11 +189,11 @@ URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
 
 
-def session_exists(session=None):
+def session_exists():
     try:
         result = subprocess.run(
-            # "=" disables tmux prefix matching (the sweep session shares a prefix).
-            ["tmux", "has-session", "-t", "=" + (session or CONFIG["session"])],
+            # "=" disables tmux prefix matching (other sessions may share a prefix).
+            ["tmux", "has-session", "-t", "=" + CONFIG["session"]],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -380,10 +371,13 @@ def wait_ready(alive=session_exists):
     raise RuntimeError("Server not ready within startup timeout")
 
 
-def evaluate(limit, output=None, workdir=None):
+def evaluate(limit, output=None):
+    """Run the generative check (chat_eval.py) against the running server."""
+    if CONFIG["task"] != "mmlu_stem_chat":
+        raise RuntimeError("Only generative evaluation is supported (ADR 0004)")
     status()
     if output is None:
-        output = ARTIFACTS / ("smoke" if limit else "mmlu")
+        output = ARTIFACTS / ("chat-smoke" if limit else "chat")
         output /= time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
     actual = None
@@ -399,139 +393,31 @@ def evaluate(limit, output=None, workdir=None):
         (output / "rounding-before.json").write_text(
             json.dumps(get_json("/rounding/stats"), indent=2)
         )
-    if CONFIG["task"] == "mmlu_stem_chat":
-        command = [
-            CONFIG["python"],
-            str(SCRIPT.with_name("chat_eval.py")),
-            "run",
-            "--config",
-            str(output / "experiment.json"),
-            "--output",
-            str(output),
-            "--url",
-            URL,
-        ]
-        if limit:
-            command += ["--limit", str(limit)]
-    else:
-        command = harness_command(limit, output)
+    command = [
+        CONFIG["python"],
+        str(SCRIPT.with_name("chat_eval.py")),
+        "run",
+        "--config",
+        str(output / "experiment.json"),
+        "--output",
+        str(output),
+        "--url",
+        URL,
+    ]
+    if limit:
+        command += ["--limit", str(limit)]
     (output / "command.json").write_text(json.dumps(command, indent=2) + "\n")
     env = environment()
     if CONFIG["offline_evaluation"]:
         env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
     (output / "experiment.json").write_text(json.dumps(CONFIG, indent=2) + "\n")
     print(f"Results: {output}", flush=True)
-    # The harness treats a local directory named "mmlu" as a task definition.
-    workdir = workdir or ARTIFACTS / "runtime"
-    workdir.mkdir(exist_ok=True)
-    subprocess.run(command, cwd=workdir, env=env, check=True)
+    subprocess.run(command, cwd=output, env=env, check=True)
     if actual:
         (output / "rounding-after.json").write_text(
             json.dumps(get_json("/rounding/stats"), indent=2)
         )
     return output
-
-
-def harness_command(limit, output):
-    model_args = ",".join(
-        [
-            f"model={CONFIG['model']}",
-            f"base_url={URL}/v1/completions",
-            f"tokenizer={CONFIG['snapshot']}",
-            "tokenizer_backend=huggingface",
-            "tokenized_requests=True",
-            "num_concurrent=8",
-            "max_retries=3",
-            f"max_length={CONFIG['max_model_len']}",
-        ]
-    )
-    command = [
-        CONFIG["python"],
-        "-m",
-        "lm_eval",
-        "--model",
-        "local-completions",
-        "--model_args",
-        model_args,
-        "--tasks",
-        CONFIG["task"],
-        "--num_fewshot",
-        str(CONFIG["fewshot"]),
-        "--batch_size",
-        "1",
-        "--seed",
-        "0,1234,1234,1234",
-        "--output_path",
-        str(output),
-        "--log_samples",
-    ]
-    if limit:
-        command += ["--limit", str(limit)]
-    return command
-
-
-def sweep(limit):
-    manifest = ARTIFACTS / ("rounding-smoke.json" if limit else "rounding-sweep.json")
-    # Resume: configurations already recorded for this limit are not rerun.
-    results = json.loads(manifest.read_text()) if manifest.exists() else []
-    local = [c for c in experiment_configs if c.get("launcher") != "mls"]
-    completed = []
-    for entry in results:
-        stored = json.loads((Path(entry["output"]) / "experiment.json").read_text())
-        if entry.get("limit") != limit or stored not in experiment_configs:
-            raise RuntimeError(
-                f"{manifest} records an unconfigured run: {entry['output']}"
-            )
-        completed.append(stored)
-    for config in local:
-        if config in completed:
-            continue
-        CONFIG.clear()
-        CONFIG.update(config)
-        stop()
-        start()
-        wait_ready()
-        output = evaluate(limit)
-        results.append(
-            {
-                "site": config["round_activations_site"],
-                "epsilon": config["round_activations_eps"],
-                "output": str(output),
-            }
-            | ({"limit": limit} if limit else {})
-        )
-        completed.append(config)
-        manifest.write_text(json.dumps(results, indent=2) + "\n")
-        print(
-            f"Completed {len(completed)}/{len(local)}: {output}",
-            flush=True,
-        )
-    print(f"Sweep complete: {manifest}", flush=True)
-
-
-def launch_sweep(limit):
-    """Run the sweep in its own tmux session so it outlives this shell."""
-    session = CONFIG["session"] + "-sweep"
-    if session_exists(session):
-        raise RuntimeError(f"Sweep session already exists: {session}")
-    log = ARTIFACTS / ("rounding-smoke.log" if limit else "rounding-sweep.log")
-    command = [CONFIG["python"], str(SCRIPT), "sweep"]
-    if limit:
-        command += ["--limit", str(limit)]
-    subprocess.run(
-        [
-            "tmux",
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-c",
-            str(ARTIFACTS),
-            f"{shlex.join(command)} >> {shlex.quote(str(log))} 2>&1",
-        ],
-        check=True,
-    )
-    print(f"Started {session}; see {log}")
 
 
 def job_root(name, limit):
@@ -567,7 +453,7 @@ def job(name, limit):
         )
         try:
             wait_ready(lambda: server.poll() is None)
-            output = evaluate(limit, attempt / "mmlu", attempt / "runtime")
+            output = evaluate(limit, attempt / "mmlu")
         finally:
             server.send_signal(signal.SIGINT)
             try:
@@ -599,11 +485,10 @@ def main():
             "status",
             "serve",
             "eval",
-            "sweep",
             "job",
         ],
     )
-    parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
+    parser.add_argument("--limit", type=int, help="Smoke-test questions per subject")
     parser.add_argument(
         "--round-activations-eps", "--round_activations_eps", type=float
     )
@@ -622,14 +507,9 @@ def main():
         default="mlp",
     )
     parser.add_argument("--name", help="Registry experiment name for job or eval")
-    parser.add_argument(
-        "--detach", action="store_true", help="Run sweep in a tmux session"
-    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
-    if args.detach and args.action != "sweep":
-        parser.error("--detach only applies to sweep")
     eps, quantile = args.round_activations_eps, args.round_activations_quantile
     schedule = args.round_activations_quantiles
     if schedule is not None:
@@ -668,10 +548,6 @@ def main():
         if args.name:
             select(args.name)
         evaluate(args.limit)
-    elif args.action == "sweep" and args.detach:
-        launch_sweep(args.limit)
-    elif args.action == "sweep":
-        sweep(args.limit)
     elif args.action == "job":
         job(args.name, args.limit)
     else:
