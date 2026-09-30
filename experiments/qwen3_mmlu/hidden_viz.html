@@ -41,6 +41,8 @@
   details { margin-top: 12px; color: var(--text-2); font-size: 12px; max-width: 980px; }
   details summary { cursor: pointer; color: var(--text); }
   code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* The figure is at least 1200 px wide (see MIN_WIDTH); scroll when narrower. */
+  .figure { overflow-x: auto; }
 </style>
 </head>
 <body>
@@ -61,7 +63,7 @@
 </div>
 <div class="error" id="error" role="alert"></div>
 <div class="info" id="info"></div>
-<div id="heatmap"></div>
+<div class="figure" id="figure"><div id="heatmap"></div></div>
 <details>
   <summary>Definitions</summary>
   <p>Each sample is a chat_baseline reference response fed back through the HF model in
@@ -156,7 +158,7 @@ const DIVERGING = [
   [0.6, "#f2b0ab"], [0.8, "#e34948"], [1, "#8c1d1d"],
 ];
 const els = Object.fromEntries(
-  ["meta", "sample", "stat", "states", "skip", "dist", "error", "info", "heatmap"].map(
+  ["meta", "sample", "stat", "states", "skip", "dist", "error", "info", "figure", "heatmap"].map(
     (id) => [id, document.getElementById(id)]
   )
 );
@@ -245,6 +247,8 @@ function ticks(stat, low, high) {
 }
 
 const EDGES = DATA.hist_edges;
+// Heatmap, colorbar, and distribution panel overlap below this plot width.
+const MIN_WIDTH = 1200;
 
 function binLabel(point) {
   if (point.lo === 0) return `|x| < ${fmt(point.hi)}`;
@@ -300,8 +304,11 @@ function ridges(sample, states, signed) {
 
 function distributionAxis(signed, low, high, tokens) {
   const axis = {
-    domain: [0.78, 1],
+    domain: [0.79, 1],
     anchor: "y",
+    automargin: true,
+    tickangle: 0,
+    tickfont: { size: 10 },
     title: { text: `${signed ? "x (symlog)" : "|x| (log)"}, all ${tokens} tokens` },
     showgrid: false,
     color: "#52514e",
@@ -318,8 +325,9 @@ function distributionAxis(signed, low, high, tokens) {
   const tickvals = [0];
   const ticktext = ["0"];
   for (let k = Math.ceil(offset) + 2; k - offset <= reach; k += 3) {
+    const power = k ? `1e${k}` : "1";
     tickvals.push(-(k - offset), k - offset);
-    ticktext.push(fmt(-(10 ** k)), fmt(10 ** k));
+    ticktext.push(`−${power}`, power);
   }
   return {
     ...axis, range: [-reach, reach], tickvals, ticktext,
@@ -398,7 +406,7 @@ function draw() {
       title: { text: SIGNED.has(stat) ? `${stat} (symlog)` : `|x| ${stat} (log)`, side: "right" },
       thickness: 12,
       outlinewidth: 0,
-      x: 0.69,
+      x: 0.68,
       xanchor: "left",
       ...ticks(stat, low, high),
     },
@@ -407,14 +415,17 @@ function draw() {
   const ridge = ridges(sample, states, signed);
   const boundary = sample.prompt_tokens - 0.5;
   const layout = {
-    uirevision: `${index}|${states}`,
+    // Token zoom survives stat/state/skip changes; rows reset with the states.
+    uirevision: String(index),
+    width: Math.max(MIN_WIDTH, els.figure.clientWidth),
     height: Math.max(280, 110 + states.length * 24),
     margin: { l: 20, r: 10, t: 26, b: 50 },
     paper_bgcolor: "#fcfcfb",
     plot_bgcolor: "#fcfcfb",
     font: { family: "system-ui, sans-serif", size: 12, color: "#0b0b0b" },
     xaxis: {
-      domain: [0, 0.68],
+      domain: [0, 0.67],
+      automargin: true,
       title: { text: "token position (drag to zoom, double-click to reset)" },
       showgrid: false, zeroline: false, color: "#52514e",
     },
@@ -427,6 +438,7 @@ function draw() {
       tickvals: states.map((_, row) => row),
       ticktext: states.map(stateLabel),
       range: [-0.5, states.length - 0.5],
+      uirevision: `${index}|${states}`,
       showgrid: false, zeroline: false, color: "#52514e", automargin: true,
     },
     shapes: [{
@@ -442,9 +454,9 @@ function draw() {
       font: { color: "#0b0b0b", family: "ui-monospace, Menlo, monospace", size: 12 },
     },
   };
-  Plotly.react(els.heatmap, [trace, ...ridge.traces], layout, {
-    responsive: true, displaylogo: false,
-  });
+  // Explicit size instead of Plotly's responsive mode, which collapses the plot
+  // to zero height inside the scrolling container after a window resize.
+  Plotly.react(els.heatmap, [trace, ...ridge.traces], layout, { displaylogo: false });
 }
 
 els.sample.addEventListener("change", () => {
@@ -454,6 +466,11 @@ els.sample.addEventListener("change", () => {
 els.stat.addEventListener("change", draw);
 els.skip.addEventListener("input", draw);
 els.dist.addEventListener("change", draw);
+let resizing;
+window.addEventListener("resize", () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(draw, 150);
+});
 els.states.addEventListener("change", draw);
 els.states.addEventListener("keydown", (event) => {
   if (event.key === "Enter") draw();
