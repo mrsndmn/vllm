@@ -6,6 +6,8 @@ Setting small intermediate activations to zero may create sparsity without a
 material change in MMLU accuracy. Expert activations and complete transformer
 block outputs are separate experiments. Quantile zeroing tests whether a fixed
 per-token sparsity (25% or 50% of each token row) is tolerated at either site.
+The `moe_out` site (added later) zeroes a layer's MoE output alone, separating
+sparsification of one layer's update from wiping the accumulated stream.
 
 ## Setup
 
@@ -22,7 +24,7 @@ From the repository root, using the documented Python environment:
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/run.py stop
 ```
 
-Use `block` for the other location. Both hyphenated and underscored epsilon flags
+Use `block` or `moe_out` for the other sites. Both hyphenated and underscored epsilon flags
 are accepted. Omit the epsilon flag on restart to restore the original server.
 The existing [serving README](README.md) describes the port, persistence, and logs.
 `start` remains idempotent; use `restart` to change a running server's settings.
@@ -45,7 +47,7 @@ one layer's update from wiping the accumulated stream, which `block` does (see
 
 `--round-activations-quantile q` (q in [0, 1), exclusive with a nonzero
 epsilon) replaces the constant with a per-token-row cutoff: the row's
-floor(q * width)-th smallest magnitude (width 6144 for `mlp`, 2048 for `block`).
+floor(q * width)-th smallest magnitude (width 6144 for `mlp`, 2048 for `block` and `moe_out`).
 Nonzero finite values at or below it are zeroed, ties included, so each row ends
 with at least a q share of zeros; values already zero count toward q. The rule is
 independent of batching. See `docs/adr/0001-per-token-quantile-zeroing.md`.

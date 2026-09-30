@@ -647,7 +647,9 @@ def main():
     )
     parser.add_argument(
         # Same values as rounding_stats.SITES (not imported: launchers lack torch).
-        "--round-activations-site", choices=["mlp", "block", "moe_out"], default="mlp"
+        "--round-activations-site",
+        choices=["mlp", "block", "moe_out"],
+        default="mlp",
     )
     parser.add_argument("--name", help="Registry experiment name for job or eval")
     parser.add_argument(

@@ -37,9 +37,7 @@ def main():
         type=lambda text: validate_schedule(text.split(",")),
         help="Comma-separated quantile per equal consecutive layer group",
     )
-    parser.add_argument(
-        "--round-activations-site", choices=SITES, required=True
-    )
+    parser.add_argument("--round-activations-site", choices=SITES, required=True)
     parser.add_argument("--rounding-db", type=Path, required=True)
     args, server_args = parser.parse_known_args()
     modes = (

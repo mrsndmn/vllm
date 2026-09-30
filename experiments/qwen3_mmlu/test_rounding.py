@@ -607,7 +607,9 @@ def test_generative_eps_and_moe_out_rows():
         for eps in ("0.01", "0.1", "0.5")
     ]
     assert list(rows) == eps_names + ["chat_moe_out_q0.4", "chat_moe_out_q0.5"]
-    baseline = next(c for c in run.experiment_configs if c.get("name") == "chat_baseline")
+    baseline = next(
+        c for c in run.experiment_configs if c.get("name") == "chat_baseline"
+    )
     zeroing = ("name", "round_activations_site", "round_activations_eps")
     zeroing += ("round_activations_quantile",)
     for name, config in rows.items():
@@ -650,15 +652,15 @@ def test_moe_out_zeroes_the_moe_output_and_keeps_the_residual_bits():
         layer_operands("mlp", hidden, residual)
 
 
-def test_run_cli_and_server_accept_every_site():
+def test_run_cli_site_choices_match_rounding_sites():
+    # run.py cannot import rounding_stats (the launcher env lacks torch), so its
+    # hard-coded choices must track SITES, which rounding_server.py uses directly.
     from rounding_stats import SITES
 
-    source = (run.SCRIPT.parent / "run.py").read_text()
-    assert f'choices={list(SITES)}'.replace("'", '"') in source
     help_text = subprocess.run(
         [sys.executable, str(run.SCRIPT), "--help"], capture_output=True, text=True
     ).stdout
-    assert "moe_out" in help_text
+    assert "--round-activations-site {" + ",".join(SITES) + "}" in help_text
 
 
 def test_evaluate_routes_chat_rows_to_chat_eval(tmp_path, monkeypatch):
