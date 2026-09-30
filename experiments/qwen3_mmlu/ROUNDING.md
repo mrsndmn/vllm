@@ -241,6 +241,42 @@ forced after the reasoning cap plus finished responses without an answer line
 | chat_mlp_q0.95 | 86.51 | 285 / 19 | 233 | 32 (4/23) | 95.00–95.03 |
 | chat_mlp_q0.99 | 66.12 | 86 / 218 | 786 | 92 (3/84) | 99.00 |
 
+Generative fixed-ε and moe_out arms (commit `6ef774f2e1`, same setup, all
+samples validated by `chat_eval.py summarize`). "Forced" counts capped responses
+plus finished responses without an answer line; "Total zero %" is the mean over
+layers with the per-layer range. A changed count of 304 (0/282) means every
+answer changed and all 282 baseline-correct answers broke.
+
+| Arm | Accuracy % | Natural / forced | Unparsed | Mean reasoning tokens | Changed (fixed/broken) | Total zero %, mean (range) |
+|---|---:|---:|---:|---:|---:|---:|
+| chat_mlp_eps0.01 | 93.09 | 298 / 6 | 0 | 202 | 8 (4/3) | 16.7 (4.3–72.7) |
+| chat_mlp_eps0.1 | 91.45 | 298 / 6 | 0 | 205 | 10 (2/6) | 62.5 (25.5–99.4) |
+| chat_mlp_eps0.5 | 60.53 | 254 / 50 | 0 | 303 | 113 (4/102) | 95.3 (67.6–99.98) |
+| chat_block_eps0.01 | 92.11 | 297 / 7 | 0 | 198 | 12 (4/6) | 7.8 (0.6–49.4) |
+| chat_block_eps0.1 | 0.00 | 0 / 304 | 304 | 1024 | 304 (0/282) | 70.1 (6.2–99.5) |
+| chat_block_eps0.5 | 0.00 | 0 / 304 | 303 | 1022 | 304 (0/282) | 92.4 (34.1–99.9) |
+| chat_moe_out_eps0.01 | 92.76 | 296 / 8 | 0 | 211 | 9 (4/4) | 19.7 (1.4–68.3) |
+| chat_moe_out_eps0.1 | 0.00 | 0 / 304 | 304 | 1021 | 304 (0/282) | 85.4 (12.5–99.99) |
+| chat_moe_out_eps0.5 | 0.00 | 0 / 304 | 304 | 1024 | 304 (0/282) | 98.7 (59.4–100) |
+| chat_moe_out_q0.4 | 93.42 | 299 / 5 | 0 | 204 | 16 (8/6) | 40.09 (40.09–40.10) |
+| chat_moe_out_q0.5 | 91.78 | 296 / 8 | 0 | 184 | 15 (6/9) | 50.12 (50.12–50.12) |
+
+The 0% arms loop until the cap (block ε 0.1: "1 1 1 …"; moe_out ε 0.1: repeated
+option lines; moe_out ε 0.5: invisible characters) and never produce a letter,
+so they score below chance.
+
+Paired q comparison: moe_out and block at the same per-token share (token rows
+of 2048 values at both sites). "Only moe_out / only block" counts questions
+exactly one arm answers correctly; z = (only moe_out − only block) /
+√(only moe_out + only block).
+
+| Share | moe_out % | block % | moe_out changed (fixed/broken) | block changed (fixed/broken) | Capped moe_out / block | Only moe_out / only block | Paired z |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| q = 0.4 | 93.42 | 90.13 | 16 (8/6) | 22 (5/13) | 5 / 14 | 13 / 3 | 2.5 |
+| q = 0.5 | 91.78 | 83.88 | 15 (6/9) | 42 (5/32) | 8 / 20 | 29 / 5 | 4.1 |
+
+Summary: `rounding-chat-sweep-summary.csv` (now with an `epsilon` column).
+
 ## Conclusions
 
 Expert activations tolerate zeroing up to epsilon 1e-2 (about 15% of values)
@@ -264,6 +300,21 @@ model: -8.9 pp, 32 answers broken vs 5 fixed, 40% longer reasoning and nearly
 Expert activations stay near the noise floor up to 80% zeroing in chat
 (-1.6 pp), then degrade: -4.6 pp at 90%, -6.3 pp at 95% (reasoning 13% longer,
 3x as many capped), and -26.6 pp at 99%, where 71% of responses hit the cap.
+
+At the same per-token share, zeroing only the MoE output keeps the generative
+check within 1 pp of chat_baseline (+0.66 pp at q0.4, -0.99 pp at q0.5; 15-16
+changed answers against a noise floor of 9), with no longer reasoning and no more
+capped responses. Block zeroing at the same shares loses 2.6 and 8.9 pp. Where
+the paired arms disagree, moe_out is the correct one 13 vs 3 times at q0.4
+(z = 2.5) and 29 vs 5 at q0.5 (z = 4.1).
+
+Fixed ε in chat: ε 0.01 stays at the noise floor at every site (8-12 changed
+answers, 8-20% zeroed). At ε 0.1 mlp holds (-1.3 pp at 62.5% zeroed, versus
+-0.38 pp in 5-shot), while block and moe_out collapse into loops with no
+parsable answer; both zero almost all values in some layers (up to 99.5% and
+99.99%). At ε 0.5 only mlp still answers (60.5% at 95% zeroed). A constant ε on
+the MoE output zeroes 12-99.99% per layer at ε 0.1, whereas quantile zeroing at
+the same site gives every layer exactly its share.
 
 ## Changelog
 
@@ -313,3 +364,4 @@ Expert activations stay near the noise floor up to 80% zeroing in chat
   chat_moe_out_eps0.5 lm-mpi-job-61761a02-0ee5-4b3a-8ed8-6faaea446f3a,
   chat_moe_out_q0.4 lm-mpi-job-0f09bd35-c8bd-4d93-8162-5d3e167d570e,
   chat_moe_out_q0.5 lm-mpi-job-200ef4e8-ea26-4ef7-b212-5d63ad4c20fc.
+- 2026-09-30: Generative ε and moe_out arms completed; recorded results.
