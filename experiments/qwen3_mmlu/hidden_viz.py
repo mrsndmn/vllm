@@ -118,8 +118,10 @@ def encode(array):
 
 
 def render(samples, meta):
-    """Standalone HTML: the template with the data JSON embedded."""
-    payload = json.dumps({**meta, "samples": samples}).replace("</", "<\\/")
+    """Standalone HTML: the template with the data JSON embedded.
+
+    Every "<" is escaped so no text (a closing tag, "<!--") can end the script."""
+    payload = json.dumps({**meta, "samples": samples}).replace("<", "\\u003c")
     page = TEMPLATE.read_text()
     return page.replace("%%PLOTLY%%", PLOTLY).replace("%%DATA%%", payload)
 
@@ -206,12 +208,16 @@ def time_stamp():
 
 
 def commit():
-    return subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=Path(__file__).parent,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    """HEAD, marked -dirty if the experiment directory has uncommitted changes."""
+
+    def git(*args):
+        return subprocess.run(
+            ["git", *args], cwd=Path(__file__).parent, capture_output=True, text=True
+        ).stdout.strip()
+
+    return git("rev-parse", "HEAD") + (
+        "-dirty" if git("status", "--porcelain", ".") else ""
+    )
 
 
 if __name__ == "__main__":

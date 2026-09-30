@@ -1061,13 +1061,27 @@ console.log(JSON.stringify({
 
 
 def test_viewer_embeds_data_that_cannot_close_its_script():
+    text = "</script><!-- <script> <b>"
     page = hidden_viz.render(
-        [{"tokens": ["</script><b>"]}], {"stat_names": hidden_viz.STATS}
+        [{"tokens": [text], "question": text}], {"stat_names": hidden_viz.STATS}
     )
     assert "%%" not in page and hidden_viz.PLOTLY in page
     data = page.split('<script type="application/json" id="data">')[1]
     data = data.split("</script>")[0]
-    assert json.loads(data)["samples"][0]["tokens"] == ["</script><b>"]
+    assert "<" not in data
+    assert json.loads(data)["samples"][0] == {"tokens": [text], "question": text}
+
+
+def test_viewer_commit_marks_uncommitted_experiment_changes(monkeypatch):
+    outputs = {("rev-parse", "HEAD"): "abc", ("status", "--porcelain", "."): ""}
+
+    def fake(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, outputs[tuple(args[1:])], "")
+
+    monkeypatch.setattr(hidden_viz.subprocess, "run", fake)
+    assert hidden_viz.commit() == "abc"
+    outputs[("status", "--porcelain", ".")] = " M hidden_viz.py"
+    assert hidden_viz.commit() == "abc-dirty"
 
 
 class CharTokenizer:
