@@ -15,8 +15,9 @@ sparsification of one layer's update from wiping the accumulated stream.
 Model selection, zeroing arms, and benchmark settings live in
 `run.py:experiment_configs`. All evaluation is generative (the chat check below;
 `docs/adr/0004`); the 5-shot likelihood harness, its local sweep, and its
-artifacts were removed on 2026-09-30, so 5-shot numbers below are history. The wrapper is pinned to the installed vLLM version;
-it does not modify the shared installation or import this checkout's vLLM.
+artifacts were removed on 2026-09-30, so 5-shot numbers below are history. The
+wrapper is pinned to the installed vLLM version; it does not modify the shared
+installation or import this checkout's vLLM.
 
 From the repository root, using the documented Python environment:
 
@@ -156,7 +157,7 @@ from differences in cached versus uncached execution shapes.
 
 ## Results
 
-Thirteen CPU correctness/API/sweep-resume/session tests pass. Live GPU checks
+At the time, thirteen CPU correctness/API/sweep-resume/session tests passed. Live GPU checks
 pass for both locations with zero and nonzero thresholds, including exact
 original completion/logprob parity at zero, chunked prefill, cached prefixes,
 concurrent requests, multiple prompts/choices, chat, streaming, and error

@@ -88,5 +88,6 @@ was checked after evaluation and remains running in its detached tmux session.
 - 2026-09-27: Completed and validated full MMLU; recorded results and confirmed
   the server remains available.
 - 2026-09-30: Evaluation is generative only; `run.py eval` runs the generative
-  check. Removed the likelihood harness path and deleted its artifacts
-  (`mmlu/`, `smoke/`, `mmlu-summary.*`, harness logs).
+  check, and local serving uses the check's `max_num_seqs` of 16 (was 8).
+  Removed the likelihood harness path and its artifacts (`mmlu/`, `smoke/`,
+  `mmlu-summary.*`, harness logs).
