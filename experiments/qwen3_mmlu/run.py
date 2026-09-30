@@ -122,6 +122,9 @@ experiment_configs += [
         (None, "mlp", 0.8),
         (None, "block", 0.3),
         (None, "block", 0.4),
+        (None, "mlp", 0.9),
+        (None, "mlp", 0.95),
+        (None, "mlp", 0.99),
     )
 ]
 # Adaptive zeroing: one quantile per group of 6 consecutive layers (8 groups).

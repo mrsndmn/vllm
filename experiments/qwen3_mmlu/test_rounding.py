@@ -572,6 +572,9 @@ def test_chat_registry_rows_and_collect_filter(tmp_path, monkeypatch):
         "chat_mlp_q0.8",
         "chat_block_q0.3",
         "chat_block_q0.4",
+        "chat_mlp_q0.9",
+        "chat_mlp_q0.95",
+        "chat_mlp_q0.99",
     ]
     for config in chat:
         assert len(config["chat_subjects"]) * config["chat_per_subject"] == 304
