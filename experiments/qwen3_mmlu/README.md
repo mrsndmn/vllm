@@ -60,6 +60,22 @@ Dependencies: the existing vLLM environment, tmux, and `datasets==3.6.0`.
 Evaluation uses the prepared local `cais/mmlu` cache without Hub requests; it must
 be retained for future runs. The server stays running after evaluation finishes.
 
+## Hidden-state viewer
+
+`hidden_viz.py` is local analysis, not an evaluation or registry row. It feeds three
+chat_baseline reference responses back through the HF model (one forward pass
+each, no new generation). For each token it computes the nine token stats (signed
+min/max/mean/median, |x| q10–q90) of all 49 hidden states and writes one HTML
+heatmap with the data embedded:
+
+```bash
+/home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/hidden_viz.py
+```
+
+It needs the local GPU free of the vLLM server (~62 GB for bf16 weights). The
+HTML controls pick the sample, the stat, and the states as a range expression
+(default `0,8,16,24,32,40,48`).
+
 ## Results
 
 Historical (5-shot letter-likelihood harness, removed 2026-09-30 with its
@@ -91,3 +107,4 @@ was checked after evaluation and remains running in its detached tmux session.
   check, and local serving uses the check's `max_num_seqs` of 16 (was 8).
   Removed the likelihood harness path and its artifacts (`mmlu/`, `smoke/`,
   `mmlu-summary.*`, harness logs).
+- 2026-09-30: Added the hidden-state viewer (`hidden_viz.py`).

@@ -60,6 +60,14 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   questions and re-score its responses; `experiments/qwen3_mmlu/sensitivity.py`
   writes `adaptive-profile.csv`/`adaptive-schedules.json` and prints schedules to
   paste into `run.py` `ADAPTIVE_SCHEDULES`, which generates `chat_adapt_*` rows.
+- `experiments/qwen3_mmlu/hidden_viz.py [--device cuda:0] [--output DIR]`: local
+  analysis outside the registry (no server; needs ~62 GB free on the local GPU).
+  Teacher-forces three chat_baseline reference responses (abstract_algebra #11,
+  anatomy #14, astronomy #6) through the HF model (transformers, bf16). For every
+  token it computes the token stats of the 49 hidden states (embedding output plus
+  the pre-norm residual after each layer) and writes
+  `<artifacts>/hidden-viz/<time>/hidden-states.html` (heatmap from the
+  `hidden_viz.html` template, data embedded, Plotly from a CDN) plus `stats.npz`.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
@@ -68,7 +76,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `rounding_api.py`: completion/chat JSON and SSE responses (including multiple
   prompts/choices), errors, `/rounding/config`, and `/rounding/stats`.
 - `python -m pytest experiments/qwen3_mmlu/test_rounding.py
-  --confcutdir=experiments/qwen3_mmlu -q`: local threshold/counter/API tests.
+  --confcutdir=experiments/qwen3_mmlu -q`: local threshold/counter/API and
+  hidden-state viewer tests (the viewer's JS range parser runs under `node`, and
+  that test is skipped without it).
 - `experiments/qwen3_mmlu/validate_live.py capture`: preserve original-server
   deterministic completion/logprob reference; `check` validates instrumented
   completion/chat, concurrent requests, multiple prompts/choices, SSE, and errors.

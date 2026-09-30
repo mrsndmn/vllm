@@ -24,6 +24,20 @@ outputs of its 8 selected experts for `mlp`, its hidden-size residual vector
 for `block`, or its hidden-size MoE output for `moe_out`.
 _Avoid_: activation vector, sample
 
+**Hidden state**:
+One token's residual-stream vector (hidden size 2048) at one depth: state 0 is
+the embedding output and state ℓ (1–48) is the residual stream after decoder
+layer ℓ−1, all before the final norm, so there are 49 per token. After a layer
+this is the same sum the `block` site tests.
+_Avoid_: HF output_hidden_states (its last entry is after the final norm), activation (unqualified)
+
+**Token stats**:
+The nine numbers summarising one hidden state of one token: the signed minimum,
+maximum, mean, and median of its values, and the q10, q25, q50, q75, and q90
+magnitude quantiles, each the row's ⌊q·n⌋-th smallest |x| as in quantile zeroing.
+The signed median and the magnitude q50 are therefore different numbers.
+_Avoid_: percentiles (unqualified), activation stats
+
 **Fixed-ε zeroing**:
 Zeroing every nonzero finite activation whose magnitude is at most a single
 constant ε shared by all layers and tokens.
@@ -64,6 +78,12 @@ The seeded 304-question MMLU STEM evaluation in which the chat model writes its
 reasoning and then an answer letter; its arms are compared with the unzeroed chat
 baseline (92.76%).
 _Avoid_: chat eval (unqualified), generative MMLU
+
+**Reference response**:
+A finished run's recorded generated text for one question (its reasoning, plus
+the forced-answer suffix and letter if it was forced), fed back to the model
+token by token instead of being generated again.
+_Avoid_: rerun, regenerated sample
 
 **Noise floor**:
 The number of answers that change between two identical unzeroed generative-check

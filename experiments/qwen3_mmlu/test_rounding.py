@@ -3,10 +3,12 @@
 import asyncio
 import itertools
 import json
+import shutil
 import subprocess
 import sys
 
 import chat_eval
+import hidden_viz
 import pytest
 import run_jobs
 import sensitivity
@@ -1003,3 +1005,127 @@ def test_registered_adaptive_schedules_meet_their_budgets():
         assert sum(schedule) / run.GROUPS >= budget - 1e-9
     names = [c["name"] for c in run_jobs.job_configs("*adapt_*")]
     assert len(names) == len(run.ADAPTIVE_SCHEDULES) == len(set(names))
+
+
+def test_token_stats_signed_moments_and_magnitude_quantiles():
+    stats = hidden_viz.token_stats(torch.tensor([[-3.0, -1, 0, 2, 5, 1, -2, 4]]))
+    # |x| sorted: 0 1 1 2 2 3 4 5; q takes the max(floor(q * 8), 1)-th smallest.
+    assert stats.tolist() == [[-3, 5, 0.75, 0.5, 0, 1, 2, 3, 4]]
+    odd = hidden_viz.token_stats(torch.tensor([[3.0, -1, 2]]))
+    assert odd[0, :4].tolist() == pytest.approx([-1, 3, 4 / 3, 2])
+
+
+def test_token_stats_quantiles_are_quantile_zeroing_cutoffs():
+    generator = torch.Generator().manual_seed(0)
+    rows = torch.randn(4, 2048, generator=generator).to(torch.bfloat16)
+    stats = hidden_viz.token_stats(rows)
+    for column, quantile in zip(range(4, 9), hidden_viz.QUANTILES):
+        values = rows.clone()
+        threshold(values, 0.0, None, quantile)
+        expected = rows.float().abs() <= stats[:, column : column + 1]
+        assert torch.equal((values == 0) & (rows != 0), expected & (rows != 0))
+
+
+def test_viewer_state_ranges_and_colour_transforms():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    page = hidden_viz.TEMPLATE.read_text()
+    lib = page.split('<script id="viz-lib">')[1].split("</script>")[0]
+    script = (
+        lib
+        + """
+const fails = (text) => { try { parseStates(text, 49); return null; }
+  catch (error) { return error.message; } };
+console.log(JSON.stringify({
+  example: parseStates("1-8,15,25,30,35,40-48", 49),
+  default: parseStates("0,8,16,24,32,40,48", 49),
+  spaced: parseStates(" 3 - 5 , 3", 49),
+  errors: ["", " ", "1-", "5-3", "49", "0-49", "a", "1,,2", "-1"].map(fails),
+  signed: [transform("min", -99), untransform("min", transform("min", -99))],
+  magnitude: [transform("q50", 100), transform("q50", 0), untransform("q50", -2)],
+}));
+"""
+    )
+    result = json.loads(
+        subprocess.run(
+            [node, "-e", script], capture_output=True, text=True, check=True
+        ).stdout
+    )
+    assert result["example"] == [*range(1, 9), 15, 25, 30, 35, *range(40, 49)]
+    assert result["default"] == [0, 8, 16, 24, 32, 40, 48]
+    assert result["spaced"] == [3, 4, 5]
+    assert all(result["errors"])
+    assert result["signed"] == pytest.approx([-2, -99])
+    assert result["magnitude"] == pytest.approx([2, None, 0.01])
+
+
+def test_viewer_embeds_data_that_cannot_close_its_script():
+    page = hidden_viz.render(
+        [{"tokens": ["</script><b>"]}], {"stat_names": hidden_viz.STATS}
+    )
+    assert "%%" not in page and hidden_viz.PLOTLY in page
+    data = page.split('<script type="application/json" id="data">')[1]
+    data = data.split("</script>")[0]
+    assert json.loads(data)["samples"][0]["tokens"] == ["</script><b>"]
+
+
+class CharTokenizer:
+    def encode(self, text, add_special_tokens):
+        assert not add_special_tokens
+        return [ord(c) for c in text]
+
+    def convert_tokens_to_ids(self, token):
+        return {"<|im_end|>": 0}[token]
+
+
+def test_viewer_sequence_rebuilds_reference_response_tokens():
+    record = {"subject": "s", "index": 1, "prompt": "ab", "reasoning": "cd"}
+    natural = dict(record, reasoning_tokens=3)
+    prompt, response, scored = hidden_viz.sequence(natural, CharTokenizer())
+    assert (prompt, response, scored) == ([97, 98], [99, 100, 0], [True] * 3)
+    forced = dict(record, reasoning_tokens=2, forced_suffix="x", forced_text="y")
+    _, response, scored = hidden_viz.sequence(forced, CharTokenizer())
+    assert (response, scored) == ([99, 100, 120, 121], [True, True, False, True])
+    with pytest.raises(ValueError, match="re-tokenizes"):
+        hidden_viz.sequence(dict(record, reasoning_tokens=2), CharTokenizer())
+    rows = [{"subject": s, "index": i} for s, i in reversed(hidden_viz.SAMPLES)]
+    assert hidden_viz.pick(rows) == rows[::-1]
+    with pytest.raises(ValueError, match="no records"):
+        hidden_viz.pick(rows[1:])
+
+
+def test_viewer_capture_keeps_embedding_and_pre_norm_layer_outputs():
+    from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
+
+    torch.manual_seed(0)
+    config = Qwen3MoeConfig(
+        vocab_size=64,
+        hidden_size=16,
+        intermediate_size=32,
+        moe_intermediate_size=8,
+        num_hidden_layers=3,
+        num_attention_heads=2,
+        num_key_value_heads=1,
+        head_dim=8,
+        num_experts=4,
+        num_experts_per_tok=2,
+    )
+    model = Qwen3MoeForCausalLM(config).eval()
+    outputs = []
+    hooks = [
+        layer.register_forward_hook(lambda module, args, out: outputs.append(out))
+        for layer in model.model.layers
+    ]
+    ids = [1, 5, 9, 3, 7]
+    states, argmax = hidden_viz.capture(model, ids)
+    for hook in hooks:
+        hook.remove()
+    with torch.no_grad():
+        embedding = model.model.embed_tokens(torch.tensor(ids))
+        logits = model(torch.tensor([ids])).logits[0]
+    assert states.shape == (4, 5, 16) and len(outputs) == 3
+    assert torch.equal(states[0], embedding)
+    for layer, output in enumerate(outputs):
+        assert torch.equal(states[layer + 1], output[0])
+    assert torch.equal(argmax, logits.argmax(dim=-1))
