@@ -261,3 +261,7 @@ model: -8.9 pp, 32 answers broken vs 5 fixed, 40% longer reasoning and nearly
   lm-mpi-job-0db04fd8-1316-4dfa-9f90-f5b916a890e0, chat_block_q0.25
   lm-mpi-job-bb10a42c-8804-4600-a2bd-d329ba69d723, chat_block_q0.5
   lm-mpi-job-b99d1149-fbd5-45ae-a317-89b2c99e655e); recorded results.
+- 2026-09-30: Launched high-quantile generative chat arms (commit `97a3a3e818`,
+  a100.1gpu): chat_mlp_q0.9 lm-mpi-job-5b1acad0-3145-4762-98f0-c7ea0e0f2962,
+  chat_mlp_q0.95 lm-mpi-job-3f0ebfc0-b52d-4c90-b15e-3a971a1a085c, chat_mlp_q0.99
+  lm-mpi-job-400412f9-dd28-4e8c-9dc0-bc9bebfbab30.
