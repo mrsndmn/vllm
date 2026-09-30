@@ -54,6 +54,10 @@
       placeholder="e.g. 1-8,15,40-48" title="Comma-separated states and ranges a-b, e.g. 1-8,15,40-48"></label>
   <label><span class="hint">Leading tokens left out of colour range</span>
     <input id="skip" type="number" min="0" step="1"></label>
+  <label>Distribution (right) <select id="dist">
+    <option value="abs">|x| (log)</option>
+    <option value="signed">signed x (symlog)</option>
+  </select></label>
 </div>
 <div class="error" id="error" role="alert"></div>
 <div class="info" id="info"></div>
@@ -74,6 +78,12 @@
   (<code>&lt;|im_start|&gt;</code>, <code>user</code>) carry massive activations (|x| up to
   ~1400) that would otherwise set it; their cells are still drawn, clamped. Hover any
   cell for the raw values of all nine stats.</p>
+  <p>Distribution (right of the heatmap, one ridge per shown state): all values of that
+  hidden state over every token of the sample (tokens × 2048), counted in log-spaced
+  |x| bins (10 per decade from 1e-5 to 1e4; smaller magnitudes and zeros share the
+  centre bin of the signed view and are left out of the |x| view). Each ridge is
+  scaled to its own tallest bin; hover a point for the bin's share of all values.
+  The signed view places ±x at ±(log10|x| + 5), so 0 marks |x| &lt; 1e-5.</p>
 </details>
 
 <script type="application/json" id="data">%%DATA%%</script>
@@ -106,6 +116,31 @@ function untransform(stat, z) {
   if (SIGNED.has(stat)) return Math.sign(z) * (10 ** Math.abs(z) - 1);
   return 10 ** z;
 }
+
+// Points of one state's value distribution from sign-split |x| bin counts
+// (bin 0: |x| < edges[0]; bin i: edges[i-1] <= |x| < edges[i]; the last is open).
+// |x| view: bin i >= 1 at its geometric centre (log axis), bin 0 left out. Signed
+// view: x mapped to sign(x) * (log10|x| - log10 edges[0]), bin 0 at 0.
+function distribution(negative, positive, edges, signed) {
+  const last = edges.length - 1;
+  const bin = (i, sign) => ({
+    lo: i ? edges[i - 1] : 0,
+    hi: i === last ? Infinity : edges[i],
+    sign,
+  });
+  const at = (i) => Math.log10(Math.sqrt(edges[i - 1] * edges[i])) - Math.log10(edges[0]);
+  const points = [];
+  if (!signed) {
+    for (let i = 1; i <= last; i++) {
+      points.push({ x: Math.sqrt(edges[i - 1] * edges[i]), count: negative[i] + positive[i], ...bin(i, 0) });
+    }
+    return points;
+  }
+  for (let i = last; i >= 1; i--) points.push({ x: -at(i), count: negative[i], ...bin(i, -1) });
+  points.push({ x: 0, count: negative[0] + positive[0], lo: 0, hi: edges[0], sign: 0 });
+  for (let i = 1; i <= last; i++) points.push({ x: at(i), count: positive[i], ...bin(i, 1) });
+  return points;
+}
 </script>
 <script>
 const DATA = JSON.parse(document.getElementById("data").textContent);
@@ -121,14 +156,14 @@ const DIVERGING = [
   [0.6, "#f2b0ab"], [0.8, "#e34948"], [1, "#8c1d1d"],
 ];
 const els = Object.fromEntries(
-  ["meta", "sample", "stat", "states", "skip", "error", "info", "heatmap"].map(
+  ["meta", "sample", "stat", "states", "skip", "dist", "error", "info", "heatmap"].map(
     (id) => [id, document.getElementById(id)]
   )
 );
 
-function decode(b64) {
+function decode(b64, Type = Float32Array) {
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return new Float32Array(bytes.buffer);
+  return new Type(bytes.buffer);
 }
 
 function escapeHtml(text) {
@@ -151,6 +186,7 @@ function statLabel(name) {
 const samples = DATA.samples.map((sample) => ({
   ...sample,
   values: decode(sample.stats),
+  hist: decode(sample.hist, Int32Array),
   labels: sample.tokens.map((token) => escapeHtml(JSON.stringify(token))),
 }));
 
@@ -206,6 +242,89 @@ function ticks(stat, low, high) {
     if (values.length < 3) values = [0, 0.25, 0.5, 0.75, 1].map((f) => low + f * (high - low));
   }
   return { tickvals: values, ticktext: values.map((z) => fmt(untransform(stat, z))) };
+}
+
+const EDGES = DATA.hist_edges;
+
+function binLabel(point) {
+  if (point.lo === 0) return `|x| < ${fmt(point.hi)}`;
+  const range = point.hi === Infinity
+    ? `≥ ${fmt(point.lo)}` : `${fmt(point.lo)} – ${fmt(point.hi)}`;
+  return `${["x < 0, ", "", "x ≥ 0, "][point.sign + 1]}|x| ${range}`;
+}
+
+// One ridge per shown state (row), scaled to its tallest bin, on the x2 axis.
+function ridges(sample, states, signed) {
+  const size = EDGES.length;
+  const traces = [];
+  let low = Infinity;
+  let high = -Infinity;
+  states.forEach((state, row) => {
+    const base = state * 2 * size;
+    const negative = sample.hist.subarray(base, base + size);
+    const positive = sample.hist.subarray(base + size, base + 2 * size);
+    const total = negative.reduce((a, b) => a + b, 0) + positive.reduce((a, b) => a + b, 0);
+    const points = distribution(negative, positive, EDGES, signed);
+    const peak = Math.max(...points.map((point) => point.count)) || 1;
+    for (const point of points) {
+      if (point.count) {
+        low = Math.min(low, point.x);
+        high = Math.max(high, point.x);
+      }
+    }
+    const floor = row - 0.45;
+    const x = points.map((point) => point.x);
+    const y = points.map((point) => floor + (0.9 * point.count) / peak);
+    const custom = points.map((point) => [
+      stateLabel(state), binLabel(point), ((100 * point.count) / total).toPrecision(3),
+    ]);
+    traces.push({
+      type: "scatter",
+      mode: "lines",
+      xaxis: "x2",
+      yaxis: "y",
+      x: [x[0], ...x, x[x.length - 1]],
+      y: [floor, ...y, floor],
+      customdata: [custom[0], ...custom, custom[custom.length - 1]],
+      fill: "toself",
+      fillcolor: "rgba(42, 120, 214, 0.22)",
+      line: { color: "#2a78d6", width: 1.25 },
+      hoveron: "points",
+      hovertemplate: "state %{customdata[0]}<br>%{customdata[1]}<br>" +
+        "%{customdata[2]}% of values<extra></extra>",
+      showlegend: false,
+    });
+  });
+  return { traces, low, high };
+}
+
+function distributionAxis(signed, low, high, tokens) {
+  const axis = {
+    domain: [0.78, 1],
+    anchor: "y",
+    title: { text: `${signed ? "x (symlog)" : "|x| (log)"}, all ${tokens} tokens` },
+    showgrid: false,
+    color: "#52514e",
+  };
+  if (!Number.isFinite(low)) [low, high] = signed ? [-1, 1] : [1e-3, 1];
+  if (!signed) {
+    return {
+      ...axis, type: "log", dtick: 2, exponentformat: "power", zeroline: false,
+      range: [Math.log10(low) - 0.15, Math.log10(high) + 0.15],
+    };
+  }
+  const offset = Math.log10(EDGES[0]);
+  const reach = Math.max(Math.abs(low), Math.abs(high)) + 0.3;
+  const tickvals = [0];
+  const ticktext = ["0"];
+  for (let k = Math.ceil(offset) + 2; k - offset <= reach; k += 3) {
+    tickvals.push(-(k - offset), k - offset);
+    ticktext.push(fmt(-(10 ** k)), fmt(10 ** k));
+  }
+  return {
+    ...axis, range: [-reach, reach], tickvals, ticktext,
+    zeroline: true, zerolinecolor: "#c9c8c3",
+  };
 }
 
 function draw() {
@@ -265,7 +384,7 @@ function draw() {
   const trace = {
     type: "heatmap",
     x: [...Array(count).keys()],
-    y: states.map(stateLabel),
+    y: states.map((_, row) => row),
     z,
     customdata: custom,
     hovertemplate: hover,
@@ -279,22 +398,37 @@ function draw() {
       title: { text: SIGNED.has(stat) ? `${stat} (symlog)` : `|x| ${stat} (log)`, side: "right" },
       thickness: 12,
       outlinewidth: 0,
+      x: 0.69,
+      xanchor: "left",
       ...ticks(stat, low, high),
     },
   };
+  const signed = els.dist.value === "signed";
+  const ridge = ridges(sample, states, signed);
   const boundary = sample.prompt_tokens - 0.5;
   const layout = {
-    uirevision: String(index),
+    uirevision: `${index}|${states}`,
     height: Math.max(280, 110 + states.length * 24),
     margin: { l: 20, r: 10, t: 26, b: 50 },
     paper_bgcolor: "#fcfcfb",
     plot_bgcolor: "#fcfcfb",
     font: { family: "system-ui, sans-serif", size: 12, color: "#0b0b0b" },
     xaxis: {
+      domain: [0, 0.68],
       title: { text: "token position (drag to zoom, double-click to reset)" },
       showgrid: false, zeroline: false, color: "#52514e",
     },
-    yaxis: { type: "category", showgrid: false, color: "#52514e", automargin: true },
+    xaxis2: {
+      ...distributionAxis(signed, ridge.low, ridge.high, count),
+      uirevision: `${index}|${states}|${signed}`,
+    },
+    yaxis: {
+      tickmode: "array",
+      tickvals: states.map((_, row) => row),
+      ticktext: states.map(stateLabel),
+      range: [-0.5, states.length - 0.5],
+      showgrid: false, zeroline: false, color: "#52514e", automargin: true,
+    },
     shapes: [{
       type: "line", x0: boundary, x1: boundary, yref: "paper", y0: 0, y1: 1,
       line: { color: "#0b0b0b", width: 1.5, dash: "dot" },
@@ -308,7 +442,9 @@ function draw() {
       font: { color: "#0b0b0b", family: "ui-monospace, Menlo, monospace", size: 12 },
     },
   };
-  Plotly.react(els.heatmap, [trace], layout, { responsive: true, displaylogo: false });
+  Plotly.react(els.heatmap, [trace, ...ridge.traces], layout, {
+    responsive: true, displaylogo: false,
+  });
 }
 
 els.sample.addEventListener("change", () => {
@@ -317,6 +453,7 @@ els.sample.addEventListener("change", () => {
 });
 els.stat.addEventListener("change", draw);
 els.skip.addEventListener("input", draw);
+els.dist.addEventListener("change", draw);
 els.states.addEventListener("change", draw);
 els.states.addEventListener("keydown", (event) => {
   if (event.key === "Enter") draw();

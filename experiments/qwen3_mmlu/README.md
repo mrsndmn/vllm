@@ -74,7 +74,8 @@ heatmap with the data embedded:
 
 It needs the local GPU free of the vLLM server (~62 GB for bf16 weights). The
 HTML controls pick the sample, the stat, and the states as a range expression
-(default `0,8,16,24,32,40,48`).
+(default `0,8,16,24,32,40,48`). To the right of each shown state is the distribution
+of all its values over the sample's tokens, as |x| (log axis) or signed x (symlog).
 
 ## Results
 
@@ -108,3 +109,4 @@ was checked after evaluation and remains running in its detached tmux session.
   Removed the likelihood harness path and its artifacts (`mmlu/`, `smoke/`,
   `mmlu-summary.*`, harness logs).
 - 2026-09-30: Added the hidden-state viewer (`hidden_viz.py`).
+- 2026-09-30: Viewer shows per-state value distributions (|x| or signed).

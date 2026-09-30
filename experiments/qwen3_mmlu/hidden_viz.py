@@ -4,8 +4,8 @@ Local analysis outside the run.py registry. Teacher-forces the reference
 responses of three generative-check questions through the HF model (one forward
 pass each), keeps every token's 49 hidden states (the embedding output and the
 residual stream after each decoder layer, all before the final norm), reduces
-each to nine token stats, and writes one HTML file with the data embedded
-(Plotly loads from a CDN).
+each to nine token stats plus a per-state histogram of all its values, and
+writes one HTML file with the data embedded (Plotly loads from a CDN).
 """
 
 import argparse
@@ -31,6 +31,8 @@ DEFAULT_STATES = "0,8,16,24,32,40,48"
 # <|im_start|> and "user" open every prompt with massive activations (|x| ~ 1e3);
 # the viewer leaves them out of the colour range by default.
 DEFAULT_SKIP = 2
+# |x| bin edges of the per-state value distributions: 10 per decade, 1e-5 to 1e4.
+HIST_EDGES = 10.0 ** (np.arange(91) / 10 - 5)
 PLOTLY = "https://cdn.plot.ly/plotly-2.35.2.min.js"
 TEMPLATE = Path(__file__).with_name("hidden_viz.html")
 
@@ -50,6 +52,19 @@ def token_stats(rows):
         + [magnitude[:, rank] for rank in ranks],
         dim=1,
     )
+
+
+def value_histogram(rows):
+    """Counts [2, len(HIST_EDGES)] of all values of one hidden state (every token):
+    row 0 negative and row 1 non-negative values, by |x| bin. Bin 0 holds
+    |x| < HIST_EDGES[0] (zeros included), bin i HIST_EDGES[i-1] <= |x| <
+    HIST_EDGES[i], and the last bin also everything above."""
+    values = rows.float().flatten()
+    edges = torch.tensor(HIST_EDGES, dtype=torch.float32, device=values.device)
+    bins = torch.bucketize(values.abs(), edges, right=True)
+    bins = bins.clamp(max=len(HIST_EDGES) - 1)
+    index = (values >= 0).long() * len(HIST_EDGES) + bins
+    return torch.bincount(index, minlength=2 * len(HIST_EDGES)).view(2, -1)
 
 
 def pick(records):
@@ -113,8 +128,8 @@ def token_text(tokenizer, token):
     return tokenizer.convert_ids_to_tokens(token) if "�" in text else text
 
 
-def encode(array):
-    return base64.b64encode(np.ascontiguousarray(array, dtype="<f4").tobytes()).decode()
+def encode(array, dtype="<f4"):
+    return base64.b64encode(np.ascontiguousarray(array, dtype=dtype).tobytes()).decode()
 
 
 def render(samples, meta):
@@ -153,12 +168,16 @@ def main():
         stats = torch.stack([token_stats(state) for state in states])
         if not stats.isfinite().all():
             raise RuntimeError("Non-finite token stats")
+        hist = torch.stack([value_histogram(state) for state in states]).cpu()
+        if hist.sum() != states.numel():
+            raise RuntimeError("Value histograms do not cover every value")
         # Position t predicts token t + 1; count model-written response tokens.
         predicted = argmax[len(prompt) - 1 : len(ids) - 1].tolist()
         hits = [p == t for p, t, s in zip(predicted, response, scored) if s]
         key = f"{record['subject']}_{record['index']}"
         arrays[f"{key}_stats"] = stats.cpu().numpy()
         arrays[f"{key}_ids"] = np.array(ids)
+        arrays[f"{key}_hist"] = hist.numpy()
         samples.append(
             {
                 **{
@@ -179,6 +198,7 @@ def main():
                 "argmax_agreement": sum(hits) / len(hits),
                 "states": stats.shape[0],
                 "stats": encode(stats.cpu().numpy()),
+                "hist": encode(hist.numpy(), "<i4"),
             }
         )
         print(
@@ -196,8 +216,14 @@ def main():
         "stat_names": STATS,
         "default_states": DEFAULT_STATES,
         "default_skip": DEFAULT_SKIP,
+        "hist_edges": HIST_EDGES.tolist(),
     }
-    np.savez_compressed(output / "stats.npz", stat_names=np.array(STATS), **arrays)
+    np.savez_compressed(
+        output / "stats.npz",
+        stat_names=np.array(STATS),
+        hist_edges=HIST_EDGES,
+        **arrays,
+    )
     page = output / "hidden-states.html"
     page.write_text(render(samples, meta))
     print(f"{page} ({page.stat().st_size / 2**20:.1f} MiB)")

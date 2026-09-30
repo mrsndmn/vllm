@@ -1044,6 +1044,8 @@ console.log(JSON.stringify({
   errors: ["", " ", "1-", "5-3", "49", "0-49", "a", "1,,2", "-1"].map(fails),
   signed: [transform("min", -99), untransform("min", transform("min", -99))],
   magnitude: [transform("q50", 100), transform("q50", 0), untransform("q50", -2)],
+  dist_abs: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], false),
+  dist_signed: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], true),
 }));
 """
     )
@@ -1058,6 +1060,14 @@ console.log(JSON.stringify({
     assert all(result["errors"])
     assert result["signed"] == pytest.approx([-2, -99])
     assert result["magnitude"] == pytest.approx([2, None, 0.01])
+    absolute = result["dist_abs"]
+    assert [p["x"] for p in absolute] == pytest.approx([10**0.5, 10**1.5])
+    assert [p["count"] for p in absolute] == [5, 2]
+    assert [(p["lo"], p["hi"]) for p in absolute] == [(1, 10), (10, None)]
+    signed = result["dist_signed"]
+    assert [p["x"] for p in signed] == pytest.approx([-1.5, -0.5, 0, 0.5, 1.5])
+    assert [p["count"] for p in signed] == [2, 1, 3, 4, 0]
+    assert [p["sign"] for p in signed] == [-1, -1, 0, 1, 1]
 
 
 def test_viewer_embeds_data_that_cannot_close_its_script():
@@ -1082,6 +1092,18 @@ def test_viewer_commit_marks_uncommitted_experiment_changes(monkeypatch):
     assert hidden_viz.commit() == "abc"
     outputs[("status", "--porcelain", ".")] = " M hidden_viz.py"
     assert hidden_viz.commit() == "abc-dirty"
+
+
+def test_viewer_value_histogram_bins_by_sign_and_log_magnitude():
+    values = torch.tensor([[0.0, 1e-6, -1.0, 1.0], [1.5, -3000.0, 2e4, -0.0]])
+    counts = hidden_viz.value_histogram(values.to(torch.bfloat16).float())
+    assert counts.shape == (2, len(hidden_viz.HIST_EDGES)) == (2, 91)
+    assert counts.sum() == values.numel()
+    # Bin i holds 10^((i - 51) / 10) <= |x| < 10^((i - 50) / 10); bin 0 below 1e-5.
+    negative = {i: n for i, n in enumerate(counts[0].tolist()) if n}
+    positive = {i: n for i, n in enumerate(counts[1].tolist()) if n}
+    assert negative == {51: 1, 85: 1}
+    assert positive == {0: 3, 51: 1, 52: 1, 90: 1}
 
 
 class CharTokenizer:

@@ -68,6 +68,8 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   the pre-norm residual after each layer) and writes
   `<artifacts>/hidden-viz/<time>/hidden-states.html` (heatmap from the
   `hidden_viz.html` template, data embedded, Plotly from a CDN) plus `stats.npz`.
+  The heatmap has a per-state value distribution on its right (all tokens, from
+  log-|x| histograms), shown as |x| or signed x.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
