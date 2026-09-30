@@ -335,6 +335,9 @@ function distributionAxis(signed, low, high, tokens) {
   };
 }
 
+// Ranges a double-click should restore; Plotly's own reset returns to the first draw's.
+let home = {};
+
 function draw() {
   const index = Number(els.sample.value);
   const sample = samples[index];
@@ -457,6 +460,7 @@ function draw() {
   // Explicit size instead of Plotly's responsive mode, which collapses the plot
   // to zero height inside the scrolling container after a window resize.
   Plotly.react(els.heatmap, [trace, ...ridge.traces], layout, { displaylogo: false });
+  home = { "yaxis.range": layout.yaxis.range, "xaxis2.range": layout.xaxis2.range };
 }
 
 els.sample.addEventListener("change", () => {
@@ -467,16 +471,26 @@ els.stat.addEventListener("change", draw);
 els.skip.addEventListener("input", draw);
 els.dist.addEventListener("change", draw);
 let resizing;
-window.addEventListener("resize", () => {
+let drawnWidth = 0;
+// Follows the figure's own width (window resizes, page scrollbars appearing).
+new ResizeObserver(() => {
+  if (els.figure.clientWidth === drawnWidth) return;
   clearTimeout(resizing);
-  resizing = setTimeout(draw, 150);
-});
+  resizing = setTimeout(() => {
+    drawnWidth = els.figure.clientWidth;
+    draw();
+  }, 150);
+}).observe(els.figure);
 els.states.addEventListener("change", draw);
 els.states.addEventListener("keydown", (event) => {
   if (event.key === "Enter") draw();
 });
 showInfo(samples[0]);
+drawnWidth = els.figure.clientWidth;
 draw();
+els.heatmap.on("plotly_doubleclick", () => {
+  setTimeout(() => Plotly.relayout(els.heatmap, home), 0);
+});
 </script>
 </body>
 </html>
