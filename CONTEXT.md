@@ -30,9 +30,11 @@ before its routing weight is applied; the MoE output is their weighted sum.
 _Avoid_: moe_expert, expert activations (the `mlp` site's SiLU-and-multiply outputs)
 
 **Token row**:
-All activations of one token at one layer and zeroing site: the concatenated
-outputs of its 8 selected experts for `mlp`, its hidden-size residual vector
-for `block`, or its hidden-size MoE output for `moe_out`.
+All activations of one token at one layer and site: its 8 selected experts'
+SiLU-and-multiply outputs (8 × 768) for `mlp`, its hidden-size residual vector
+for `block`, or its hidden-size MoE output for `moe_out`. The hidden-state viewer
+also has `residual` rows (residual r, hidden size) and `experts` rows (the expert
+outputs, 8 × hidden size).
 _Avoid_: activation vector, sample
 
 **Hidden state**:
@@ -43,9 +45,10 @@ this is the same sum the `block` site tests.
 _Avoid_: HF output_hidden_states (its last entry is after the final norm), activation (unqualified)
 
 **Token stats**:
-The nine numbers summarising one hidden state of one token: the signed minimum,
-maximum, mean, and median of its values, and the q10, q25, q50, q75, and q90
-magnitude quantiles, each the row's ⌊q·n⌋-th smallest |x| as in quantile zeroing.
+The nine numbers summarising one token row (a hidden state or another site's
+row) of n values: the signed minimum, maximum, mean, and median of its values,
+and the q10, q25, q50, q75, and q90 magnitude quantiles, each the row's ⌊q·n⌋-th
+smallest |x| as in quantile zeroing.
 The signed median and the magnitude q50 are therefore different numbers.
 _Avoid_: percentiles (unqualified), activation stats
 

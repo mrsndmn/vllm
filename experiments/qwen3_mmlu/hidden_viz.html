@@ -71,7 +71,7 @@
   <summary>Definitions</summary>
   <p>Each sample is a chat_baseline reference response fed back through the HF model in
   one forward pass (prompt + recorded response, no new generation). Each layer computes
-  r = x + attn(x), then the MoE output h = Σ wₖ·expertₖ(norm(r)) over the 8 selected
+  r = x + attn(norm(x)), then the MoE output h = Σ wₖ·expertₖ(norm(r)) over the 8 selected
   experts, and passes on r + h. Sites (one token row each):</p>
   <ul>
     <li><code>block</code>: the hidden state, r + h after the layer (2048 values); state 0
