@@ -64,12 +64,15 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   analysis outside the registry (no server; needs ~62 GB free on the local GPU).
   Teacher-forces three chat_baseline reference responses (abstract_algebra #11,
   anatomy #14, astronomy #6) through the HF model (transformers, bf16). For every
-  token it computes the token stats of the 49 hidden states (embedding output plus
-  the pre-norm residual after each layer) and writes
+  token it computes token stats at five sites: `block` (the 49 hidden states:
+  embedding output plus the pre-norm residual after each layer), and per layer
+  `residual` (r), `moe_out`, `experts` (unweighted expert outputs), and `mlp`
+  (experts' SiLU-and-multiply outputs, recomputed from each MoE block's input and
+  checked to reproduce its output exactly). It writes
   `<artifacts>/hidden-viz/<time>/hidden-states.html` (heatmap from the
-  `hidden_viz.html` template, data embedded, Plotly from a CDN) plus `stats.npz`.
-  The heatmap has a per-state value distribution on its right (all tokens, from
-  log-|x| histograms), shown as |x| or signed x.
+  `hidden_viz.html` template, data embedded, Plotly from a CDN; ~13 MB) plus
+  `stats.npz`. The heatmap has a site selector and a per-state value distribution
+  on its right (all tokens, from log-|x| histograms), shown as |x| or signed x.
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous

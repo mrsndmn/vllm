@@ -1046,6 +1046,7 @@ console.log(JSON.stringify({
   magnitude: [transform("q50", 100), transform("q50", 0), untransform("q50", -2)],
   dist_abs: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], false),
   dist_signed: distribution([0, 1, 2], [3, 4, 0], [1, 10, 100], true),
+  sites: [siteStates([0, 1, 8, 48], 1), siteStates([0, 8], 0)],
 }));
 """
     )
@@ -1068,6 +1069,10 @@ console.log(JSON.stringify({
     assert [p["x"] for p in signed] == pytest.approx([-1.5, -0.5, 0, 0.5, 1.5])
     assert [p["count"] for p in signed] == [2, 1, 3, 4, 0]
     assert [p["sign"] for p in signed] == [-1, -1, 0, 1, 1]
+    assert result["sites"] == [
+        {"shown": [1, 8, 48], "dropped": [0]},
+        {"shown": [0, 8], "dropped": []},
+    ]
 
 
 def test_viewer_embeds_data_that_cannot_close_its_script():
@@ -1131,7 +1136,7 @@ def test_viewer_sequence_rebuilds_reference_response_tokens():
         hidden_viz.pick(rows[1:])
 
 
-def test_viewer_capture_keeps_embedding_and_pre_norm_layer_outputs():
+def test_viewer_capture_records_every_site_per_layer():
     from transformers import Qwen3MoeConfig, Qwen3MoeForCausalLM
 
     torch.manual_seed(0)
@@ -1148,20 +1153,51 @@ def test_viewer_capture_keeps_embedding_and_pre_norm_layer_outputs():
         num_experts_per_tok=2,
     )
     model = Qwen3MoeForCausalLM(config).eval()
-    outputs = []
+    outputs, attention = [], []
     hooks = [
         layer.register_forward_hook(lambda module, args, out: outputs.append(out))
         for layer in model.model.layers
+    ] + [
+        layer.self_attn.register_forward_hook(
+            lambda module, args, out: attention.append(out[0][0])
+        )
+        for layer in model.model.layers
     ]
     ids = [1, 5, 9, 3, 7]
-    states, argmax = hidden_viz.capture(model, ids)
+    sites, argmax = hidden_viz.capture(model, ids)
     for hook in hooks:
         hook.remove()
     with torch.no_grad():
         embedding = model.model.embed_tokens(torch.tensor(ids))
         logits = model(torch.tensor([ids])).logits[0]
-    assert states.shape == (4, 5, 16) and len(outputs) == 3
-    assert torch.equal(states[0], embedding)
+    shapes = {site: tuple(rows.shape) for site, rows in sites.items()}
+    assert list(shapes) == list(hidden_viz.SITES)
+    assert shapes == {
+        "block": (4, 5, 16),
+        "residual": (3, 5, 16),
+        "moe_out": (3, 5, 16),
+        "experts": (3, 5, 2 * 16),
+        "mlp": (3, 5, 2 * 8),
+    }
+    block = sites["block"]
+    assert torch.equal(block[0], embedding) and len(outputs) == 3
     for layer, output in enumerate(outputs):
-        assert torch.equal(states[layer + 1], output[0])
+        assert torch.equal(block[layer + 1], output[0])
+        # r = layer input + attention output; the layer output is r + MoE output.
+        residual = sites["residual"][layer]
+        assert torch.equal(residual, block[layer] + attention[layer])
+        assert torch.equal(block[layer + 1], residual + sites["moe_out"][layer])
+        module = model.model.layers[layer]
+        with torch.no_grad():
+            x = module.post_attention_layernorm(residual)
+            chosen = module.mlp.gate(x).softmax(dim=-1).topk(2, dim=-1).indices
+            for token in range(len(ids)):
+                for slot, index in enumerate(chosen[token].tolist()):
+                    expert = module.mlp.experts[index]
+                    row = x[token : token + 1]
+                    act = expert.act_fn(expert.gate_proj(row)) * expert.up_proj(row)
+                    mlp = sites["mlp"][layer, token, slot * 8 : (slot + 1) * 8]
+                    out = sites["experts"][layer, token, slot * 16 : (slot + 1) * 16]
+                    assert torch.allclose(mlp, act[0], atol=1e-6)
+                    assert torch.allclose(out, expert(row)[0], atol=1e-6)
     assert torch.equal(argmax, logits.argmax(dim=-1))

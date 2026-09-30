@@ -1,11 +1,13 @@
-"""Hidden-state token stats of three chat_baseline responses as an HTML heatmap.
+"""Activation token stats of three chat_baseline responses as an HTML heatmap.
 
 Local analysis outside the run.py registry. Teacher-forces the reference
 responses of three generative-check questions through the HF model (one forward
-pass each), keeps every token's 49 hidden states (the embedding output and the
-residual stream after each decoder layer, all before the final norm), reduces
-each to nine token stats plus a per-state histogram of all its values, and
-writes one HTML file with the data embedded (Plotly loads from a CDN).
+pass each) and keeps, for every token, the activations of five sites (SITES): the
+49 hidden states (embedding output and residual stream after each decoder layer,
+before the final norm) and, per layer, the residual r, the MoE output, the expert
+outputs, and the experts' SiLU-and-multiply outputs. Each token row is reduced to
+nine token stats, each site row to a histogram of all its values, and everything
+is written to one HTML file with the data embedded (Plotly loads from a CDN).
 """
 
 import argparse
@@ -19,6 +21,7 @@ from pathlib import Path
 import chat_eval
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 import run
 
@@ -27,6 +30,18 @@ REFERENCE = "chat_baseline"
 SAMPLES = (("abstract_algebra", 11), ("anatomy", 14), ("astronomy", 6))
 QUANTILES = (0.1, 0.25, 0.5, 0.75, 0.9)
 STATS = ("min", "max", "mean", "median", "q10", "q25", "q50", "q75", "q90")
+# Viewer sites and their descriptions. `block` has the 49 hidden states; the others
+# one row per decoder layer, shown as state s = layer + 1 so rows line up.
+SITES = {
+    "block": "hidden state: residual stream after the layer (r + MoE output); "
+    "state 0 = embedding",
+    "residual": "residual r: stream after the layer's attention, before the MoE add",
+    "moe_out": "MoE output: router-weighted sum of the selected experts' outputs",
+    "experts": "expert outputs: each selected expert's down_proj output, before its "
+    "routing weight (8 × 2048 per token)",
+    "mlp": "mlp site: each selected expert's SiLU(gate)·up, the input of down_proj "
+    "(8 × 768 per token)",
+}
 DEFAULT_STATES = "0,8,16,24,32,40,48"
 # <|im_start|> and "user" open every prompt with massive activations (|x| ~ 1e3);
 # the viewer leaves them out of the colour range by default.
@@ -55,7 +70,7 @@ def token_stats(rows):
 
 
 def value_histogram(rows):
-    """Counts [2, len(HIST_EDGES)] of all values of one hidden state (every token):
+    """Counts [2, len(HIST_EDGES)] of all values of one site row (every token):
     row 0 negative and row 1 non-negative values, by |x| bin. Bin 0 holds
     |x| < HIST_EDGES[0] (zeros included), bin i HIST_EDGES[i-1] <= |x| <
     HIST_EDGES[i], and the last bin also everything above."""
@@ -94,32 +109,91 @@ def sequence(record, tokenizer):
     return prompt, response, scored
 
 
-def capture(model, ids):
-    """(49 hidden states [49, T, H], next-token argmax [T]) of one sequence.
+def expert_rows(moe, hidden):
+    """(mlp rows [T, k * I], expert-output rows [T, k * H], MoE output [T, H]) of
+    one sparse-MoE block, recomputed exactly as HF's forward: the selected experts'
+    SiLU(gate) * up (down_proj's input) and down_proj outputs in top-k order, and
+    their routing-weighted sum."""
+    x = hidden.reshape(-1, hidden.shape[-1])
+    weights = F.softmax(moe.gate(x), dim=1, dtype=torch.float)
+    weights, selected = torch.topk(weights, moe.top_k, dim=-1)
+    if moe.norm_topk_prob:
+        weights = weights / weights.sum(dim=-1, keepdim=True)
+    weights = weights.to(x.dtype)
+    mask = F.one_hot(selected, num_classes=moe.num_experts).permute(2, 1, 0)
+    width = moe.experts[0].down_proj.in_features
+    inner = x.new_zeros(x.shape[0], moe.top_k, width)
+    outer = x.new_zeros(x.shape[0], moe.top_k, x.shape[1])
+    mixed = torch.zeros_like(x)
+    for index in torch.greater(mask.sum(dim=(-1, -2)), 0).nonzero()[:, 0].tolist():
+        expert = moe.experts[index]
+        slot, token = torch.where(mask[index])
+        state = x[token]
+        act = expert.act_fn(expert.gate_proj(state)) * expert.up_proj(state)
+        out = expert.down_proj(act)
+        inner[token, slot] = act
+        outer[token, slot] = out
+        mixed.index_add_(0, token, (out * weights[token, slot, None]).to(x.dtype))
+    return inner.flatten(1), outer.flatten(1), mixed
 
-    HF's output_hidden_states holds the embedding output and the outputs of all
-    but the last decoder layer, then the final-norm output; the last layer's
-    pre-norm output is the final norm's input, taken with a hook.
+
+def capture(model, ids):
+    """(activations by site, next-token argmax [T]) of one teacher-forced sequence.
+
+    Each site maps to [rows, T, width]. `block` holds the 49 hidden states: HF's
+    output_hidden_states has the embedding output and the outputs of all but the
+    last decoder layer, then the final-norm output, so the last layer's pre-norm
+    output is taken as the final norm's input. The other sites have one row per
+    layer: `residual` is the post-attention norm's input, `moe_out` the sparse-MoE
+    block's output, and `experts`/`mlp` come from expert_rows, whose weighted sum
+    must reproduce `moe_out` exactly.
     """
-    final = []
-    handle = model.model.norm.register_forward_pre_hook(
-        lambda module, args: final.append(args[0])
-    )
+    final, layers = [], {site: [] for site in SITES if site != "block"}
+
+    def moe_hook(module, args, output):
+        inner, outer, mixed = expert_rows(module, args[0])
+        moe_out = output[0].reshape(mixed.shape)
+        if not torch.equal(mixed, moe_out):
+            difference = (mixed - moe_out).abs().max().item()
+            raise RuntimeError(
+                f"Expert outputs do not sum to the MoE output ({difference})"
+            )
+        layers["moe_out"].append(moe_out)
+        layers["experts"].append(outer)
+        layers["mlp"].append(inner)
+
+    handles = [
+        model.model.norm.register_forward_pre_hook(
+            lambda module, args: final.append(args[0])
+        )
+    ]
+    for layer in model.model.layers:
+        handles.append(
+            layer.post_attention_layernorm.register_forward_pre_hook(
+                lambda module, args: layers["residual"].append(args[0][0])
+            )
+        )
+        handles.append(layer.mlp.register_forward_hook(moe_hook))
     try:
         with torch.no_grad():
             output = model(
                 torch.tensor([ids], device=model.device), output_hidden_states=True
             )
     finally:
-        handle.remove()
+        for handle in handles:
+            handle.remove()
     hidden = output.hidden_states
-    if len(final) != 1 or len(hidden) != model.config.num_hidden_layers + 1:
+    count = model.config.num_hidden_layers
+    if len(final) != 1 or len(hidden) != count + 1:
         raise RuntimeError("Unexpected hidden-state layout")
+    if any(len(rows) != count for rows in layers.values()):
+        raise RuntimeError("Not every layer recorded every site")
     with torch.no_grad():
         if not torch.equal(model.model.norm(final[0]), hidden[-1]):
             raise RuntimeError("Last hidden state is not the final norm's input")
-    states = torch.cat([*hidden[:-1], final[0]])
-    return states, output.logits[0].argmax(dim=-1)
+    sites = {"block": torch.cat([*hidden[:-1], final[0]])}
+    sites.update({site: torch.stack(rows) for site, rows in layers.items()})
+    return sites, output.logits[0].argmax(dim=-1)
 
 
 def token_text(tokenizer, token):
@@ -164,20 +238,31 @@ def main():
     for record in records:
         prompt, response, scored = sequence(record, tokenizer)
         ids = prompt + response
-        states, argmax = capture(model, ids)
-        stats = torch.stack([token_stats(state) for state in states])
-        if not stats.isfinite().all():
-            raise RuntimeError("Non-finite token stats")
-        hist = torch.stack([value_histogram(state) for state in states]).cpu()
-        if hist.sum() != states.numel():
-            raise RuntimeError("Value histograms do not cover every value")
+        activations, argmax = capture(model, ids)
+        key = f"{record['subject']}_{record['index']}"
+        sites = {}
+        for site, rows in activations.items():
+            stats = torch.stack([token_stats(row) for row in rows]).cpu()
+            if not stats.isfinite().all():
+                raise RuntimeError(f"Non-finite {site} token stats")
+            hist = torch.stack([value_histogram(row) for row in rows]).cpu()
+            if hist.sum() != rows.numel():
+                raise RuntimeError(f"{site} histograms do not cover every value")
+            arrays[f"{key}_{site}_stats"] = stats.numpy()
+            arrays[f"{key}_{site}_hist"] = hist.numpy()
+            sites[site] = {
+                "rows": rows.shape[0],
+                "width": rows.shape[2],
+                # State of the first row: 0 (embedding) for block, 1 (layer 0) else.
+                "first_state": model.config.num_hidden_layers + 1 - rows.shape[0],
+                "stats": encode(stats.numpy()),
+                "hist": encode(hist.numpy(), "<i4"),
+            }
+        del activations
         # Position t predicts token t + 1; count model-written response tokens.
         predicted = argmax[len(prompt) - 1 : len(ids) - 1].tolist()
         hits = [p == t for p, t, s in zip(predicted, response, scored) if s]
-        key = f"{record['subject']}_{record['index']}"
-        arrays[f"{key}_stats"] = stats.cpu().numpy()
         arrays[f"{key}_ids"] = np.array(ids)
-        arrays[f"{key}_hist"] = hist.numpy()
         samples.append(
             {
                 **{
@@ -196,9 +281,7 @@ def main():
                 "tokens": [token_text(tokenizer, token) for token in ids],
                 "prompt_tokens": len(prompt),
                 "argmax_agreement": sum(hits) / len(hits),
-                "states": stats.shape[0],
-                "stats": encode(stats.cpu().numpy()),
-                "hist": encode(hist.numpy(), "<i4"),
+                "sites": sites,
             }
         )
         print(
@@ -214,6 +297,8 @@ def main():
         "commit": commit(),
         "created": datetime.datetime.now().isoformat(timespec="seconds"),
         "stat_names": STATS,
+        "sites": [{"name": k, "description": v} for k, v in SITES.items()],
+        "states": model.config.num_hidden_layers + 1,
         "default_states": DEFAULT_STATES,
         "default_skip": DEFAULT_SKIP,
         "hist_edges": HIST_EDGES.tolist(),

@@ -18,6 +18,17 @@ to the residual stream; the `moe_out` site tests and zeroes it alone, leaving th
 residual stream untouched.
 _Avoid_: block residual, residual branch, block output
 
+**Residual r**:
+The stream a layer's MoE output is added to: the residual stream after that
+layer's attention and before its MoE add (vLLM's `residual`). The `block` site
+tests r plus the MoE output; the `moe_out` site leaves r untouched.
+_Avoid_: residual only stream, residual (unqualified), skip branch
+
+**Expert outputs**:
+The down-projection outputs of a token's selected experts at one layer, each taken
+before its routing weight is applied; the MoE output is their weighted sum.
+_Avoid_: moe_expert, expert activations (the `mlp` site's SiLU-and-multiply outputs)
+
 **Token row**:
 All activations of one token at one layer and zeroing site: the concatenated
 outputs of its 8 selected experts for `mlp`, its hidden-size residual vector

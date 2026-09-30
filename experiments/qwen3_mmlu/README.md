@@ -65,15 +65,18 @@ be retained for future runs. The server stays running after evaluation finishes.
 `hidden_viz.py` is local analysis, not an evaluation or registry row. It feeds three
 chat_baseline reference responses back through the HF model (one forward pass
 each, no new generation). For each token it computes the nine token stats (signed
-min/max/mean/median, |x| q10–q90) of all 49 hidden states and writes one HTML
-heatmap with the data embedded:
+min/max/mean/median, |x| q10–q90) at five sites: `block` (all 49 hidden states),
+and per layer `residual` (r, before the MoE add), `moe_out`, `experts` (each
+selected expert's down_proj output before its routing weight), and `mlp` (the
+experts' SiLU·up before down_proj). It writes one HTML heatmap with the data
+embedded:
 
 ```bash
 /home/jovyan/.mlspace/envs/vllm_cu126/bin/python experiments/qwen3_mmlu/hidden_viz.py
 ```
 
 It needs the local GPU free of the vLLM server (~62 GB for bf16 weights). The
-HTML controls pick the sample, the stat, and the states as a range expression
+HTML controls pick the sample, the site, the stat, and the states as a range expression
 (default `0,8,16,24,32,40,48`). To the right of each shown state is the distribution
 of all its values over the sample's tokens, as |x| (log axis) or signed x (symlog).
 
@@ -110,3 +113,4 @@ was checked after evaluation and remains running in its detached tmux session.
   `mmlu-summary.*`, harness logs).
 - 2026-09-30: Added the hidden-state viewer (`hidden_viz.py`).
 - 2026-09-30: Viewer shows per-state value distributions (|x| or signed).
+- 2026-09-30: Viewer covers five sites (block, residual, moe_out, experts, mlp).
