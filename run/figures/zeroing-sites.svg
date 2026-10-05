@@ -28,7 +28,7 @@
   <path d="M495 216 H638 V845 H495" class="flow"/>
   <text x="657" y="430" transform="rotate(90 657 430)" class="small">residual bypass r</text>
   <rect x="155" y="280" width="340" height="48" rx="10" class="box"/>
-  <text x="325" y="311" text-anchor="middle" class="label">RMSNorm → router → selected experts</text>
+  <text x="325" y="311" text-anchor="middle" class="label" style="font-size:16px">RMSNorm → router → selected experts</text>
   <path d="M325 328 V370" class="flow"/>
   <rect x="125" y="353" width="400" height="306" rx="14" fill="#f5f3ff" stroke="#ddd6fe" stroke-dasharray="6 5"/>
   <text x="145" y="381" class="small">Inside each selected expert</text>
@@ -39,19 +39,19 @@
   <text x="325" y="507" text-anchor="middle" class="label">a = SiLU(gate) ⊙ up</text>
   <path d="M325 524 V546" class="flow"/>
   <rect x="155" y="546" width="340" height="44" rx="10" fill="#7c3aed"/>
-  <text x="325" y="575" text-anchor="middle" class="heading" style="fill:white">1 · mlp: zero entries of a</text>
+  <text x="325" y="575" text-anchor="middle" class="heading" style="fill:white;font-size:18px">1 · mlp: zero entries of a</text>
   <path d="M325 590 V610" class="flow"/>
   <rect x="155" y="610" width="340" height="36" rx="10" class="box"/>
   <text x="325" y="635" text-anchor="middle" class="label">Down projection</text>
   <path d="M325 646 V689" class="flow"/>
   <rect x="155" y="689" width="340" height="48" rx="10" class="box"/>
-  <text x="325" y="720" text-anchor="middle" class="label">Router-weighted sum of expert outputs</text>
+  <text x="325" y="720" text-anchor="middle" class="label" style="font-size:16px">Router-weighted sum of expert outputs</text>
   <path d="M325 737 V760" class="flow"/>
   <rect x="155" y="760" width="340" height="44" rx="10" fill="#0891b2"/>
-  <text x="325" y="789" text-anchor="middle" class="heading" style="fill:white">2 · moe_out: zero entries of h</text>
+  <text x="325" y="789" text-anchor="middle" class="heading" style="fill:white;font-size:18px">2 · moe_out: zero entries of h</text>
   <path d="M325 804 V823" class="flow"/>
   <rect x="155" y="823" width="340" height="44" rx="10" fill="#ea580c"/>
-  <text x="325" y="852" text-anchor="middle" class="heading" style="fill:white">3 · block: select using h + r</text>
+  <text x="325" y="852" text-anchor="middle" class="heading" style="fill:white;font-size:18px">3 · block: select using h + r</text>
   <path d="M325 867 V889" class="flow"/>
   <text x="325" y="912" text-anchor="middle" class="small">(h, r) → next fused add + RMSNorm</text>
 
