@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1100" viewBox="0 0 1500 1100" role="img" aria-labelledby="title description">
+  <title id="title">Where activation zeroing applies in a Qwen3 MoE decoder layer</title>
+  <desc id="description">MLP zeroing acts after SiLU gate times up and before each expert down projection. MoE output zeroing acts after the router-weighted sum, on the update h alone. Block zeroing selects coordinates using h plus residual r, then zeroes both operands at those coordinates. These are alternative experiment sites.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10" fill="#64748b"/></marker>
+    <style>
+      text { font-family: DejaVu Sans, Arial, sans-serif; fill: #172033; }
+      .title { font-size: 32px; font-weight: 700; }
+      .subtitle { font-size: 19px; fill: #526078; }
+      .label { font-size: 19px; }
+      .small { font-size: 17px; fill: #526078; }
+      .heading { font-size: 23px; font-weight: 700; }
+      .body { font-size: 19px; }
+      .flow { fill: none; stroke: #64748b; stroke-width: 2.5; marker-end: url(#arrow); }
+      .box { fill: #fff; stroke: #cbd5e1; stroke-width: 2; }
+    </style>
+  </defs>
+  <rect width="1500" height="1100" fill="#f8fafc"/>
+  <text x="55" y="58" class="title">Where each zeroing arm acts</text>
+  <text x="55" y="91" class="subtitle">Qwen3-30B-A3B-Instruct-2507 · one decoder layer · colored sites are alternatives</text>
+
+  <rect x="55" y="120" width="645" height="802" rx="18" fill="#fff" stroke="#e2e8f0"/>
+  <text x="80" y="157" class="heading">Decoder / MoE data flow</text>
+  <rect x="155" y="185" width="340" height="62" rx="10" class="box"/>
+  <text x="325" y="211" text-anchor="middle" class="label">Attention + residual addition</text>
+  <text x="325" y="235" text-anchor="middle" class="small">post-attention stream r</text>
+  <path d="M325 247 V280" class="flow"/>
+  <path d="M495 216 H638 V845 H495" class="flow"/>
+  <text x="657" y="430" transform="rotate(90 657 430)" class="small">residual bypass r</text>
+  <rect x="155" y="280" width="340" height="48" rx="10" class="box"/>
+  <text x="325" y="311" text-anchor="middle" class="label">RMSNorm → router → selected experts</text>
+  <path d="M325 328 V370" class="flow"/>
+  <rect x="125" y="353" width="400" height="306" rx="14" fill="#f5f3ff" stroke="#ddd6fe" stroke-dasharray="6 5"/>
+  <text x="145" y="381" class="small">Inside each selected expert</text>
+  <rect x="155" y="398" width="340" height="48" rx="10" class="box"/>
+  <text x="325" y="429" text-anchor="middle" class="label">Gate and up projections</text>
+  <path d="M325 446 V476" class="flow"/>
+  <rect x="155" y="476" width="340" height="48" rx="10" class="box"/>
+  <text x="325" y="507" text-anchor="middle" class="label">a = SiLU(gate) ⊙ up</text>
+  <path d="M325 524 V546" class="flow"/>
+  <rect x="155" y="546" width="340" height="44" rx="10" fill="#7c3aed"/>
+  <text x="325" y="575" text-anchor="middle" class="heading" style="fill:white">1 · mlp: zero entries of a</text>
+  <path d="M325 590 V610" class="flow"/>
+  <rect x="155" y="610" width="340" height="36" rx="10" class="box"/>
+  <text x="325" y="635" text-anchor="middle" class="label">Down projection</text>
+  <path d="M325 646 V689" class="flow"/>
+  <rect x="155" y="689" width="340" height="48" rx="10" class="box"/>
+  <text x="325" y="720" text-anchor="middle" class="label">Router-weighted sum of expert outputs</text>
+  <path d="M325 737 V760" class="flow"/>
+  <rect x="155" y="760" width="340" height="44" rx="10" fill="#0891b2"/>
+  <text x="325" y="789" text-anchor="middle" class="heading" style="fill:white">2 · moe_out: zero entries of h</text>
+  <path d="M325 804 V823" class="flow"/>
+  <rect x="155" y="823" width="340" height="44" rx="10" fill="#ea580c"/>
+  <text x="325" y="852" text-anchor="middle" class="heading" style="fill:white">3 · block: select using h + r</text>
+  <path d="M325 867 V889" class="flow"/>
+  <text x="325" y="912" text-anchor="middle" class="small">(h, r) → next fused add + RMSNorm</text>
+
+  <rect x="735" y="120" width="710" height="202" rx="15" fill="#f5f3ff" stroke="#ddd6fe"/>
+  <text x="760" y="158" class="heading" style="fill:#7c3aed">1 · mlp arms</text>
+  <text x="760" y="194" class="body">Mask the gated activation before the down projection.</text>
+  <text x="760" y="226" class="body">One token row spans all selected experts’ activations.</text>
+  <text x="760" y="258" class="body">This changes the MoE update indirectly.</text>
+  <text x="760" y="294" class="small">Fixed ε · uniform q · adaptive q by layer group</text>
+
+  <rect x="735" y="342" width="710" height="202" rx="15" fill="#ecfeff" stroke="#a5f3fc"/>
+  <text x="760" y="380" class="heading" style="fill:#0891b2">2 · moe_out arms</text>
+  <text x="760" y="416" class="body">Mask h after the experts have been mixed by the router.</text>
+  <text x="760" y="448" class="body">At selected coordinates: h ← 0.</text>
+  <text x="760" y="480" class="body">The residual r keeps its original values.</text>
+  <text x="760" y="516" class="small">Fixed ε · uniform q</text>
+
+  <rect x="735" y="564" width="710" height="224" rx="15" fill="#fff7ed" stroke="#fed7aa"/>
+  <text x="760" y="602" class="heading" style="fill:#ea580c">3 · block arms</text>
+  <text x="760" y="638" class="body">Select coordinates from s = float32(h) + float32(r).</text>
+  <text x="760" y="670" class="body">At selected nonzero coordinates: h ← 0 and r ← 0.</text>
+  <text x="760" y="702" class="body">The next fused addition therefore produces zero there.</text>
+  <text x="760" y="734" class="body">Unselected coordinates keep both original operands.</text>
+  <text x="760" y="770" class="small">Fixed ε · uniform q · adaptive q by layer group</text>
+
+  <rect x="735" y="808" width="710" height="114" rx="15" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="760" y="844" class="heading">Baseline / baseline repeat</text>
+  <text x="760" y="878" class="body">No activation zeroing at any of the three sites.</text>
+  <text x="760" y="906" class="small">Profiling arms use the same site, restricted to one layer group.</text>
+
+  <rect x="55" y="945" width="1390" height="115" rx="15" fill="#fff" stroke="#e2e8f0"/>
+  <text x="80" y="979" class="heading">Same locations, different selection rules</text>
+  <text x="80" y="1010" class="body">Fixed ε: select small magnitudes. Uniform q: use a per-token magnitude quantile, including cutoff ties.</text>
+  <text x="80" y="1040" class="body">Adaptive q: vary that quantile by layer group. Applied during prefill and decode; dense matrix operations still run.</text>
+  <text x="55" y="1085" style="font-size:14px;fill:#64748b">Source: experiments/qwen3_mmlu/rounding_worker.py · rounding_stats.py · run.py. Conceptual addition shown; block hook mutates (h, r).</text>
+</svg>
