@@ -103,3 +103,15 @@ _Avoid_: rerun, regenerated sample
 The number of answers that change between two identical unzeroed generative-check
 runs (9), the change expected from batching nondeterminism alone.
 _Avoid_: variance, error bar
+
+**Weight report**:
+A view of checkpoint weights by decoder layer, tensor family, and MoE expert,
+with distributions and matrix characteristics; it describes parameters rather
+than token-dependent activations.
+_Avoid_: activation viewer, hidden-state viewer
+
+**Weight stable rank estimate**:
+The squared Frobenius norm of a checkpoint matrix divided by an estimate of its
+largest squared singular value; it measures spectral concentration rather than
+the number of nonzero singular values.
+_Avoid_: numerical rank, exact rank, effective rank (unqualified)

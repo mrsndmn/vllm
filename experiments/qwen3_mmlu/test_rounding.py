@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Behavior checks for threshold boundaries and isolated API statistics."""
 
 import asyncio
@@ -13,6 +16,7 @@ import pytest
 import run_jobs
 import sensitivity
 import torch
+import weight_viz
 from rounding_api import RoundingMiddleware
 from rounding_stats import (
     connect,
@@ -26,6 +30,136 @@ from rounding_stats import (
 )
 
 import run
+
+
+def test_weight_report_moments_and_stable_rank_match_known_matrices():
+    matrices = torch.stack(
+        [torch.diag(torch.tensor([3.0, 1.0])), torch.eye(2), torch.zeros(2, 2)]
+    )
+    stats, linear, log, _ = weight_viz.summarize(matrices, weight_viz.CONFIG, 42)
+    values = dict(zip(weight_viz.STATS, stats.T))
+    assert values["frobenius"] == pytest.approx([10**0.5, 2**0.5, 0])
+    assert values["sigma_max_est"] == pytest.approx([3, 1, 0])
+    assert values["stable_rank_est"] == pytest.approx([10 / 9, 2, 0])
+    assert values["mean"] == pytest.approx([1, 0.5, 0])
+    assert values["zero_share"] == pytest.approx([0.5, 0.5, 1])
+    assert values["std"][0] == pytest.approx((1.5) ** 0.5)
+    assert values["row_norm_cv"][0] == pytest.approx(0.5)
+    assert values["abs_q50_est"][0] == pytest.approx(0.5)
+    assert linear.sum(1).tolist() == [4, 4, 4]
+    assert log.sum((1, 2)).tolist() == [4, 4, 4]
+    assert not torch.isfinite(torch.tensor(values["excess_kurtosis"][2]))
+
+
+def test_weight_histograms_cover_tails_zero_and_sign_without_vector_rank():
+    vectors = torch.tensor([[-100.0, -0.5, -1e-8, 0, 1e-8, 0.5, 100]])
+    stats, linear, log, reach = weight_viz.summarize(vectors, weight_viz.CONFIG, 42)
+    assert reach == weight_viz.CONFIG["norm_reach"]
+    assert linear[0, 0] == linear[0, -1] == 1
+    assert log[0, 0].sum() == 3 and log[0, 1].sum() == 4
+    assert log[0, 0, 0] == 1 and log[0, 1, 0] == 2
+    assert log[0, 0, -1] == log[0, 1, -1] == 1
+    assert stats[0, 6] == pytest.approx(1 / 7)
+    assert all(not torch.isfinite(torch.tensor(v)) for v in stats[0, 14:])
+    with pytest.raises(ValueError, match="non-finite"):
+        weight_viz.summarize(torch.tensor([[float("nan")]]), weight_viz.CONFIG, 42)
+
+
+def test_weight_checkpoint_scan_covers_each_expert_and_resumes(tmp_path):
+    from safetensors.torch import save_file
+
+    names = [
+        "model.layers.0.mlp.experts.0.down_proj.weight",
+        "model.layers.0.mlp.experts.1.down_proj.weight",
+        "model.norm.weight",
+    ]
+    weights = {
+        names[0]: torch.eye(2),
+        names[1]: torch.ones(2, 2),
+        names[2]: torch.ones(2),
+    }
+    save_file(weights, tmp_path / "test.safetensors")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {n: "test.safetensors" for n in names}})
+    )
+    config = dict(weight_viz.CONFIG, snapshot=str(tmp_path))
+    first = weight_viz.collect(config, "cpu", tmp_path)
+    second = weight_viz.collect(config, "cpu", tmp_path)
+    assert {r[0] for r in first[0]} == set(names)
+    assert {tuple(r[1:4]) for r in first[0]} == {
+        (0, 0, "expert.down_proj"),
+        (0, 1, "expert.down_proj"),
+        (-1, -1, "norm"),
+    }
+    assert first[0] == second[0]
+    for a, b in zip(first[1:], second[1:]):
+        assert torch.allclose(torch.tensor(a), torch.tensor(b), equal_nan=True)
+    with pytest.raises(ValueError, match="Stale analysis cache"):
+        weight_viz.collect(dict(config, seed=43), "cpu", tmp_path)
+
+
+def test_weight_report_embeds_offline_data_and_enforces_actual_byte_limit():
+    import gzip
+
+    import pybase64 as base64
+
+    stats, linear, log, reach = weight_viz.summarize(
+        torch.eye(2)[None], weight_viz.CONFIG, 42
+    )
+    text = "</script><script>alert(1)</script>"
+    records = [[text, 0, -1, "self_attn.q_proj", [2, 2], reach]]
+    html = weight_viz.render(records, stats, linear, log, weight_viz.CONFIG, {})
+    assert "%%DATA%%" not in html and "%%PLOTLY%%" not in html
+    assert "<script src=" not in html and text not in html
+    payload = html.split('<script id="payload" type="application/octet-stream">')[1]
+    data = json.loads(gzip.decompress(base64.b64decode(payload.split("</script>")[0])))
+    assert data["records"][0][0] == text
+    with pytest.raises(ValueError, match="above"):
+        weight_viz.render(
+            records,
+            stats,
+            linear,
+            log,
+            dict(weight_viz.CONFIG, max_html_bytes=len(html.encode()) - 1),
+            {},
+        )
+
+
+def test_weight_viewer_layer_parsing_and_expert_pooling_use_observable_values():
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    lib = (
+        weight_viz.TEMPLATE.read_text()
+        .split('<script id="viz-lib">')[1]
+        .split("</script>")[0]
+    )
+    script = (
+        lib
+        + """
+const fails = text => {try {parseLayers(text, 48);return false;} catch {return true;}};
+console.log(JSON.stringify({
+  layers: parseLayers('0, 2-4, 2', 48),
+  errors: ['', '48', '4-2', '-1', '0,,1'].map(fails),
+  mean: meanMetric([0,1,2], [2,NaN,4], 1, 0),
+  pooled: pooled([0,1], [1,2,3,4], 2),
+  linear: linearPoints([1,2,3,4], 1),
+  log: logPoints([1,2,3], [.1, 1]),
+}));
+"""
+    )
+    result = json.loads(
+        subprocess.run(
+            [node, "-e", script], capture_output=True, text=True, check=True
+        ).stdout
+    )
+    assert result["layers"] == [0, 2, 3, 4] and all(result["errors"])
+    assert result["mean"] == 3 and result["pooled"] == [4, 6]
+    assert [p["x"] for p in result["linear"]] == [-1.5, -0.5, 0.5, 1.5]
+    assert result["linear"][0]["lo"] is None
+    assert result["linear"][-1]["hi"] is None
+    assert result["log"][0]["lo"] == 0
+    assert result["log"][-1]["hi"] is None
 
 
 def test_threshold_counts_new_zeros_and_affected_tokens():
