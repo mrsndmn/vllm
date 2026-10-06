@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Submit MLSpace jobs for run.py registry rows with launcher="mls".
 
 Each job serves one row inside its container (`run.py job`) and runs the
@@ -10,11 +13,12 @@ import argparse
 import fnmatch
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
 from pathlib import Path
+
+import regex as re
 
 import run
 
@@ -27,10 +31,14 @@ TAGS = "#ARKHIP #rnd #notify_completed @mrsndmn"
 REPO = Path(__file__).resolve().parents[2]
 
 
-def job_configs(pattern=None):
+def job_configs(pattern=None, analysis=False):
+    if analysis:
+        from compression import experiment_configs
+    else:
+        experiment_configs = run.experiment_configs
     return [
         config
-        for config in run.experiment_configs
+        for config in experiment_configs
         if config.get("launcher") == "mls"
         and (not pattern or fnmatch.fnmatchcase(config["name"], pattern))
     ]
@@ -38,7 +46,8 @@ def job_configs(pattern=None):
 
 def job_desc(config, limit):
     smoke = f" smoke{limit}" if limit else ""
-    return f"qwen3-mmlu zeroing {config['name']}{smoke} {TAGS}"
+    kind = "compression" if config.get("entrypoint") == "compression.py" else "zeroing"
+    return f"qwen3-mmlu {kind} {config['name']}{smoke} {TAGS}"
 
 
 def normalize(desc):
@@ -80,7 +89,9 @@ def stage(commit):
 
 
 def payload(config, workdir, limit, region):
-    command = [config["python"], "run.py", "job", "--name", config["name"]]
+    entrypoint = config.get("entrypoint", "run.py")
+    stage = "all" if entrypoint == "compression.py" else "job"
+    command = [config["python"], entrypoint, stage, "--name", config["name"]]
     if limit:
         command += ["--limit", str(limit)]
     return {
@@ -116,7 +127,7 @@ def connect():
 
 
 def launch(args):
-    configs = job_configs(args.filter)
+    configs = job_configs(args.filter, getattr(args, "analysis", False))
     if not configs:
         raise SystemExit("No MLSpace experiments match")
     commit = committed_head()
@@ -125,7 +136,12 @@ def launch(args):
     launched = []
     for config in configs:
         desc = job_desc(config, args.limit)
-        marker = run.job_root(config["name"], args.limit) / "done.json"
+        root = (
+            Path(config["output"])
+            if config.get("entrypoint") == "compression.py"
+            else run.job_root(config["name"], args.limit)
+        )
+        marker = root / "done.json"
         if marker.exists() and not args.force:
             print(f"Skip (done): {config['name']} ({marker})")
             continue
@@ -154,9 +170,16 @@ def main():
     parser.add_argument("--force", action="store_true", help="Ignore done markers")
     parser.add_argument("--filter", help="Glob over experiment names, e.g. 'chat_*'")
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
+    parser.add_argument(
+        "--analysis",
+        action="store_true",
+        help="Checkpoint compression screening registry",
+    )
     args = parser.parse_args()
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
+    if args.analysis and args.limit:
+        parser.error("--limit is for MMLU jobs, not compression analysis")
     launch(args)
 
 

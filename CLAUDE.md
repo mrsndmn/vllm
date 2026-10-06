@@ -15,6 +15,18 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `experiments/qwen3_mmlu/compression.py {all,capture,screen,plot}`: checkpoint
+  compression screening on routed corpus activations; no model accuracy eval.
+  `all` captures separate calibration/held-out splits, screens selected expert
+  projections and complete expert outputs, plots, and writes `done.json` last.
+  Individual stages resume from source/config-validated captures.
+  Configuration is in `compression.py:experiment_configs`; artifacts are under
+  the configured external output. No sparse serving kernels are implemented.
+- `experiments/qwen3_mmlu/run_jobs.py --analysis [--dry]`: submit the compression
+  registry through existing committed-code staging and deduplication. This path
+  uses the MLS client environment like the existing MMLU launcher; `--limit` is
+  unavailable for analysis. Unit checks extend `test_rounding.py`.
+
 `experiments/qwen3_mmlu/run.py` uses the installed vLLM environment and cached
 model; it does not import the development checkout's vLLM package. Run commands
 with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root.

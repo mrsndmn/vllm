@@ -6,11 +6,13 @@
 import asyncio
 import itertools
 import json
+import math
 import shutil
 import subprocess
 import sys
 
 import chat_eval
+import compression
 import hidden_viz
 import pytest
 import run_jobs
@@ -30,6 +32,183 @@ from rounding_stats import (
 )
 
 import run
+
+
+def test_compression_reservoir_keeps_uniform_priorities_and_total_routed_count():
+    rows = torch.arange(60).reshape(20, 3).bfloat16()
+    sample = compression.Reservoir(5, 42)
+    sample.add(rows[:7])
+    sample.add(rows[7:])
+    expected = (
+        torch.rand(20, generator=torch.Generator().manual_seed(42), dtype=torch.float64)
+        .topk(5)
+        .indices
+    )
+    assert sample.seen == 20 and len(sample.rows) == 5
+    assert torch.equal(sample.rows, rows[expected])
+
+
+def test_compression_capture_matches_actual_hf_expert_routing():
+    from transformers import Qwen3MoeConfig
+    from transformers.models.qwen3_moe.modeling_qwen3_moe import Qwen3MoeSparseMoeBlock
+
+    config = Qwen3MoeConfig(
+        hidden_size=16, moe_intermediate_size=8, num_experts=4, num_experts_per_tok=2
+    )
+    module = Qwen3MoeSparseMoeBlock(config).eval()
+    samples = [compression.Reservoir(24, e) for e in range(4)]
+    actual = {}
+
+    def hook(expert):
+        def save(module, args):
+            actual[expert] = args[0].clone()
+
+        return save
+
+    handles = [module.register_forward_pre_hook(compression.capture_hook(samples))]
+    handles += [
+        expert.register_forward_pre_hook(hook(e))
+        for e, expert in enumerate(module.experts)
+    ]
+    with torch.inference_mode():
+        module(torch.randn(1, 12, 16))
+    for handle in handles:
+        handle.remove()
+    assert sum(s.seen for s in samples) == 24
+    for e, rows in actual.items():
+        assert samples[e].seen == len(rows)
+        sampled = samples[e].rows[samples[e].rows[:, 0].argsort()]
+        actual_sorted = rows[rows[:, 0].argsort()]
+        assert torch.equal(sampled, actual_sorted)
+
+
+def test_compression_storage_budgets_include_csr_indices_and_factor_values():
+    config = compression.experiment_configs[0]
+    dense, budget, rank, nnz = compression.storage_budget((64, 96), 0.5, config)
+    assert dense == 64 * 96 * 2
+    assert rank * (64 + 96) * 2 <= budget
+    assert nnz * 6 + 65 * 4 <= budget < (nnz + 1) * 6 + 65 * 4
+    weight = torch.ones(64, 96)
+    compressed = compression.prune(weight, weight, nnz, per_output=True)
+    assert int(compressed.count_nonzero()) == nnz
+    per_row = compressed.count_nonzero(dim=1)
+    assert int(per_row.max() - per_row.min()) <= 1
+
+
+def test_compression_whitening_preserves_high_energy_input_direction():
+    weight = torch.diag(torch.tensor([10.0, 1.0]))
+    calibration = torch.diag(torch.tensor([0.01, 100.0]))
+    ordinary, whitened = compression.svd_basis(weight, calibration, 1e-4)
+    reference = calibration @ weight.T
+    plain_error = compression.errors(
+        reference, compression.apply(compression.factors(ordinary, 1), calibration)
+    )["relative_frobenius"]
+    aware_error = compression.errors(
+        reference, compression.apply(compression.factors(whitened, 1), calibration)
+    )["relative_frobenius"]
+    assert plain_error > 0.99 and aware_error < 0.02
+    full = compression.apply(compression.factors(ordinary, 2), calibration)
+    assert compression.errors(reference, full)["relative_frobenius"] < 0.02
+
+
+def test_compression_expert_replay_evaluates_nonlinearity_and_down_projection():
+    weights = {f: torch.eye(2) for f in ["gate_proj", "up_proj", "down_proj"]}
+    x = torch.tensor([[1.0, -1.0], [2.0, 3.0]])
+    reference = compression.expert_output(weights, x)
+    expected = torch.nn.functional.silu(x) * x
+    assert torch.equal(reference, expected)
+    changed = compression.expert_output(weights, x, "gate_proj", torch.zeros(2, 2))
+    assert torch.equal(changed, torch.zeros_like(reference))
+    assert compression.errors(reference, changed)["relative_frobenius"] == 1
+
+
+def test_compression_job_payload_uses_analysis_entrypoint_and_absolute_output():
+    config = compression.experiment_configs[0]
+    jobs = run_jobs.job_configs("*compression*", analysis=True)
+    assert jobs == [config]
+    payload = run_jobs.payload(
+        config, run_jobs.STAGING_ROOT / "commit" / run_jobs.SUBDIR, None, "SR004"
+    )
+    assert "compression.py all --name expert_compression_screen" in payload["script"]
+    assert config["python"] in payload["script"]
+    assert "run.py job" not in payload["script"]
+    assert str(run_jobs.STAGING_ROOT) in payload["script"]
+    assert run_jobs.job_desc(config, None).startswith("qwen3-mmlu compression ")
+
+
+def test_compression_pipeline_captures_and_screens_a_tiny_checkpoint(
+    tmp_path, monkeypatch
+):
+    import numpy as np
+    from safetensors.torch import save_file
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        Qwen3MoeConfig,
+        Qwen3MoeForCausalLM,
+    )
+
+    model = Qwen3MoeForCausalLM(
+        Qwen3MoeConfig(
+            vocab_size=64,
+            hidden_size=16,
+            intermediate_size=16,
+            moe_intermediate_size=8,
+            num_hidden_layers=1,
+            num_attention_heads=2,
+            num_key_value_heads=1,
+            head_dim=8,
+            num_experts=4,
+            num_experts_per_tok=2,
+        )
+    ).eval()
+    weights = model.state_dict()
+    save_file(weights, tmp_path / "model.safetensors")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {name: "model.safetensors" for name in weights}})
+    )
+    records = [
+        [name, 0, int(name.split(".")[5]), "expert." + name.split(".")[6]]
+        for name in weights
+        if ".experts." in name
+    ]
+    np.savez(
+        tmp_path / "prior.npz",
+        records=json.dumps(records),
+        stats=np.ones((len(records), len(weight_viz.STATS))),
+    )
+    config = dict(
+        compression.experiment_configs[0],
+        snapshot=str(tmp_path),
+        weight_stats=str(tmp_path),
+        layers=[0],
+        sequence_length=8,
+        min_rows={"calibration": 1, "heldout": 1},
+        max_rows={"calibration": 16, "heldout": 16},
+        storage_fractions=[0.5],
+    )
+    monkeypatch.setattr(AutoModelForCausalLM, "from_pretrained", lambda *a, **k: model)
+    monkeypatch.setattr(AutoTokenizer, "from_pretrained", lambda *a, **k: object())
+    monkeypatch.setattr(
+        compression,
+        "corpus_tokens",
+        lambda c, s, t: (
+            list(
+                range(1 if s == "calibration" else 17, 17 if s == "calibration" else 33)
+            ),
+            s,
+        ),
+    )
+    metadata = compression.capture(config, "cpu", tmp_path)
+    assert metadata["splits"]["calibration"]["tokens"] == 16
+    assert metadata["splits"]["heldout"]["tokens"] == 16
+    assert compression.capture(config, "cpu", tmp_path) == metadata
+    with torch.inference_mode():
+        rows = compression.screen(config, "cpu", tmp_path)
+    assert {r["method"] for r in rows} == set(config["methods"])
+    assert {r["family"] for r in rows} == set(config["families"])
+    assert all(r["stored_bytes"] <= r["dense_bytes"] * 0.5 for r in rows)
+    assert all(math.isfinite(r["expert_relative_frobenius"]) for r in rows)
 
 
 def test_weight_report_moments_and_stable_rank_match_known_matrices():
