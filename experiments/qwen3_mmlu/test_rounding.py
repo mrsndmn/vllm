@@ -209,6 +209,24 @@ def test_compression_pipeline_captures_and_screens_a_tiny_checkpoint(
     assert {r["family"] for r in rows} == set(config["families"])
     assert all(r["stored_bytes"] <= r["dense_bytes"] * 0.5 for r in rows)
     assert all(math.isfinite(r["expert_relative_frobenius"]) for r in rows)
+    compression.plot(config, tmp_path)
+    assert (tmp_path / "compression-error.png").exists()
+    with pytest.raises(ValueError, match="Stale screening"):
+        compression.plot(dict(config, covariance_damping=0.01), tmp_path)
+    path = tmp_path / "results.csv"
+    path.write_text(path.read_text() + "\n")
+    with pytest.raises(ValueError, match="Stale screening"):
+        compression.plot(config, tmp_path)
+
+
+def test_compression_launcher_rejects_stale_completion(tmp_path):
+    config = compression.experiment_configs[0]
+    marker = tmp_path / "done.json"
+    assert not run_jobs.complete(config, marker)
+    marker.write_text(json.dumps({"fingerprint": compression.fingerprint(config)}))
+    assert run_jobs.complete(config, marker)
+    with pytest.raises(SystemExit, match="Stale completed"):
+        run_jobs.complete(dict(config, covariance_damping=0.01), marker)
 
 
 def test_weight_report_moments_and_stable_rank_match_known_matrices():

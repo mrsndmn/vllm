@@ -126,6 +126,22 @@ def connect():
     return extra["region"], queued, submit
 
 
+def complete(config, marker):
+    """Require current source/config provenance for compression completion."""
+    if not marker.exists():
+        return False
+    if config.get("entrypoint") == "compression.py":
+        from compression import fingerprint
+
+        saved = json.loads(marker.read_text())
+        if saved.get("fingerprint") != fingerprint(config):
+            raise SystemExit(
+                "Stale completed compression analysis; "
+                "choose a new output directory in the registry"
+            )
+    return True
+
+
 def launch(args):
     configs = job_configs(args.filter, getattr(args, "analysis", False))
     if not configs:
@@ -142,7 +158,7 @@ def launch(args):
             else run.job_root(config["name"], args.limit)
         )
         marker = root / "done.json"
-        if marker.exists() and not args.force:
+        if complete(config, marker) and not args.force:
             print(f"Skip (done): {config['name']} ({marker})")
             continue
         if normalize(desc) in queued:

@@ -503,6 +503,19 @@ def screen(config, device, output):
         writer.writerows(results)
     temporary.replace(path)
     atomic_json(output / "coverage.json", coverage)
+    atomic_json(
+        output / "screen.json",
+        {
+            "fingerprint": fingerprint(config),
+            "results_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "capture_sha256": hashlib.sha256(
+                (output / "capture.json").read_bytes()
+            ).hexdigest(),
+            "device": device,
+            "torch": torch.__version__,
+            "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        },
+    )
     return results
 
 
@@ -514,6 +527,17 @@ def plot(config, output):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    saved = json.loads((output / "screen.json").read_text())
+    if (
+        saved["fingerprint"] != fingerprint(config)
+        or saved["results_sha256"]
+        != hashlib.sha256((output / "results.csv").read_bytes()).hexdigest()
+        or saved["capture_sha256"]
+        != hashlib.sha256((output / "capture.json").read_bytes()).hexdigest()
+    ):
+        raise ValueError(
+            "Stale screening results; use matching source/config and artifacts"
+        )
     with (output / "results.csv").open() as stream:
         rows = list(csv.DictReader(stream))
     fig, axes = plt.subplots(2, 3, figsize=(14, 8), sharex=True)
