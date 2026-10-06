@@ -111,6 +111,18 @@ def test_compression_whitening_preserves_high_energy_input_direction():
     assert compression.errors(reference, full)["relative_frobenius"] < 0.02
 
 
+def test_compression_whitening_handles_rank_deficient_outlier_activations():
+    generator = torch.Generator().manual_seed(73)
+    direction = torch.randn(1, 2048, generator=generator)
+    calibration = torch.tensor([[1.0], [10000.0]]) @ direction
+    weight = torch.randn(4, 2048, generator=generator)
+    _, whitened = compression.svd_basis(weight, calibration, 1e-4)
+    reference = calibration @ weight.T
+    replay = compression.apply(compression.factors(whitened, 4), calibration)
+    assert torch.isfinite(replay).all()
+    assert compression.errors(reference, replay)["relative_frobenius"] < 0.02
+
+
 def test_compression_expert_replay_evaluates_nonlinearity_and_down_projection():
     weights = {f: torch.eye(2) for f in ["gate_proj", "up_proj", "down_proj"]}
     x = torch.tensor([[1.0, -1.0], [2.0, 3.0]])

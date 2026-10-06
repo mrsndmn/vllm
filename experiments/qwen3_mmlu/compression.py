@@ -25,7 +25,7 @@ experiment_configs = [
         "instance_type": "a100.1gpu",
         "model": run.CONFIG["model"],
         "snapshot": run.CONFIG["snapshot"],
-        "output": str(run.ARTIFACTS / "compression" / "expert_compression_screen"),
+        "output": str(run.ARTIFACTS / "compression" / "expert_compression_screen_v2"),
         "weight_stats": str(run.ARTIFACTS / "weight-viz" / "qwen3-30b-v2"),
         "dataset": "Salesforce/wikitext",
         "dataset_config": "wikitext-2-raw-v1",
@@ -323,11 +323,12 @@ def svd_basis(weight, calibration, damping):
     import torch
 
     u, s, vh = torch.linalg.svd(weight, full_matrices=False)
-    covariance = calibration.T @ calibration / len(calibration)
+    calibration64 = calibration.double()
+    covariance = calibration64.T @ calibration64 / len(calibration)
     ridge = damping * covariance.diagonal().mean().clamp_min(1e-12)
     covariance.diagonal().add_(ridge)
     chol = torch.linalg.cholesky(covariance)
-    wu, ws, wvh = torch.linalg.svd(weight @ chol, full_matrices=False)
+    wu, ws, wvh = torch.linalg.svd(weight.double() @ chol, full_matrices=False)
     inverse_basis = torch.linalg.solve_triangular(chol.T, wvh.T, upper=True).T
     return (u, s, vh), (wu, ws, inverse_basis)
 
