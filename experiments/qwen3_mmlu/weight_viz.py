@@ -211,17 +211,20 @@ def collect(config, device, output):
     shards = defaultdict(list)
     for name, shard in index["weight_map"].items():
         shards[shard].append(name)
+    source_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     fingerprint = hashlib.sha256(
-        json.dumps(config, sort_keys=True).encode()
+        json.dumps(config, sort_keys=True).encode() + source_hash.encode()
     ).hexdigest()
     records, stats, linear, log = [], [], [], []
+    analysis = {}
     start = time.monotonic()
     for shard, names in sorted(shards.items()):
         cache = output / (shard + ".npz")
         if cache.exists():
             with np.load(cache, allow_pickle=False) as saved:
-                if str(saved["fingerprint"]) != fingerprint:
+                if "analysis" not in saved or str(saved["fingerprint"]) != fingerprint:
                     raise ValueError(f"Stale analysis cache: {cache}")
+                analysis[shard] = json.loads(str(saved["analysis"]))
                 records.extend(json.loads(str(saved["records"])))
                 stats.extend(saved["stats"])
                 linear.extend(saved["linear"])
@@ -248,6 +251,12 @@ def collect(config, device, output):
                     shard_log.append(gh[i])
                 del batch
         temporary = cache.with_suffix(".tmp.npz")
+        analysis[shard] = {
+            "device": str(torch.device(device)),
+            "torch": torch.__version__,
+            "source_sha256": source_hash,
+            "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
         np.savez_compressed(
             temporary,
             fingerprint=fingerprint,
@@ -255,6 +264,7 @@ def collect(config, device, output):
             stats=shard_stats,
             linear=shard_linear,
             log=shard_log,
+            analysis=json.dumps(analysis[shard]),
         )
         temporary.replace(cache)
         records.extend(shard_records)
@@ -268,7 +278,7 @@ def collect(config, device, output):
         )
     if len(records) != len(index["weight_map"]):
         raise RuntimeError("Not every checkpoint tensor was analysed")
-    return records, np.array(stats), np.array(linear), np.array(log)
+    return records, np.array(stats), np.array(linear), np.array(log), analysis
 
 
 def encode(array, dtype):
@@ -321,12 +331,12 @@ def main():
             if not (output / (shard + ".npz")).exists():
                 parser.error(f"Missing cache for {shard}")
     torch.backends.cuda.matmul.allow_tf32 = False
-    records, stats, linear, log = collect(config, args.device, output)
+    records, stats, linear, log, analysis = collect(config, args.device, output)
     provenance = {
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "snapshot": Path(config["snapshot"]).name,
-        "torch": torch.__version__,
-        "device": args.device,
+        "analysis_shards": analysis,
+        "render": {"torch": torch.__version__},
         "tensor_count": len(records),
         "parameter_count": sum(math.prod(r[4]) for r in records),
     }

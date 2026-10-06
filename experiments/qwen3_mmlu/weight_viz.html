@@ -219,6 +219,8 @@ async function boot() {
       `${DATA.provenance.parameter_count.toLocaleString()} parameters · snapshot ${DATA.provenance.snapshot} · ${DATA.provenance.created}`;
     $('analysis-note').textContent=`Analysis: ${DATA.config.sample_size} quantile samples, ${DATA.config.power_steps} power iterations, `+
       `${DATA.config.power_starts} starts, seed ${DATA.config.seed}. Data and plotting library are embedded; no network required.`;
+    const backends=[...new Set(Object.values(DATA.provenance.analysis_shards||{}).map(s=>`${s.device}, Torch ${s.torch}`))];
+    if(backends.length) $('analysis-note').textContent+=` Computed on: ${backends.join('; ')}${backends.length>1?' (mixed shard backends)':''}. Per-shard code fingerprints are embedded in the report.`;
     for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour']) {
       $(id).addEventListener('change',()=>{
         if(id==='family') {

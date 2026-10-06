@@ -84,7 +84,8 @@ def test_weight_checkpoint_scan_covers_each_expert_and_resumes(tmp_path):
     )
     config = dict(weight_viz.CONFIG, snapshot=str(tmp_path))
     first = weight_viz.collect(config, "cpu", tmp_path)
-    second = weight_viz.collect(config, "cpu", tmp_path)
+    # Cache-only reuse must retain the CPU origin even with a CUDA request.
+    second = weight_viz.collect(config, "cuda:7", tmp_path)
     assert {r[0] for r in first[0]} == set(names)
     assert {tuple(r[1:4]) for r in first[0]} == {
         (0, 0, "expert.down_proj"),
@@ -92,8 +93,12 @@ def test_weight_checkpoint_scan_covers_each_expert_and_resumes(tmp_path):
         (-1, -1, "norm"),
     }
     assert first[0] == second[0]
-    for a, b in zip(first[1:], second[1:]):
+    for a, b in zip(first[1:4], second[1:4]):
         assert torch.allclose(torch.tensor(a), torch.tensor(b), equal_nan=True)
+    assert first[4] == second[4]
+    origin = second[4]["test.safetensors"]
+    assert origin["device"] == "cpu" and origin["torch"] == torch.__version__
+    assert len(origin["source_sha256"]) == 64
     with pytest.raises(ValueError, match="Stale analysis cache"):
         weight_viz.collect(dict(config, seed=43), "cpu", tmp_path)
 
