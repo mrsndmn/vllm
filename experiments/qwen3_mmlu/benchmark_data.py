@@ -75,8 +75,8 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def download(url):
-    with urllib.request.urlopen(url, timeout=120) as response:
+def download(url, timeout=120):
+    with urllib.request.urlopen(url, timeout=timeout) as response:
         return response.read()
 
 
@@ -104,7 +104,7 @@ def prepare(task):
             path.write_bytes(raw)
         if digest(path) != grader["sha256"]:
             raise ValueError("Code grader checksum mismatch")
-    for package, version in run.BENCHMARK_PACKAGES.items():
+    for package, version in packages(settings).items():
         if importlib.metadata.version(package) != version:
             raise RuntimeError(f"Grader version mismatch: {package}")
     root = run.ARTIFACTS / "benchmarks" / task
@@ -114,7 +114,11 @@ def prepare(task):
         print(f"Validated prepared {task}", flush=True)
         return
     extra = []
-    if task in ("humaneval_plus", "mbpp_plus"):
+    if task.startswith("ruler_"):
+        import ruler
+
+        questions, extra = ruler.prepare(root, settings)
+    elif task in ("humaneval_plus", "mbpp_plus"):
         from evalplus.eval._special_oracle import MBPP_OUTPUT_NOT_NONE_TASKS
         from evalplus.gen.util import trusted_exec
 
@@ -256,18 +260,24 @@ def prepare(task):
     extra.append(path)
     manifest = dict(
         benchmark=settings,
-        packages=run.BENCHMARK_PACKAGES,
+        packages=packages(settings),
         files={str(p.relative_to(root)): digest(p) for p in extra},
     )
     (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"Prepared {task}: {len(questions)} questions", flush=True)
 
 
+def packages(settings):
+    return run.BENCHMARK_PACKAGES | (
+        run.RULER_PACKAGES if settings.get("dataset") == "NVIDIA/RULER" else {}
+    )
+
+
 def validate(root, settings):
     manifest = json.loads((root / "manifest.json").read_text())
     if manifest["benchmark"] != settings:
         raise ValueError("Prepared benchmark differs from source config")
-    if manifest["packages"] != run.BENCHMARK_PACKAGES:
+    if manifest["packages"] != packages(settings):
         raise ValueError("Prepared grader versions differ from source config")
     for name, expected in manifest["files"].items():
         if digest(root / name) != expected:

@@ -24,6 +24,8 @@ import run
 
 
 def content(question, task):
+    if task.startswith("ruler_"):
+        return question["question"]
     if task == "ifeval":
         return question["question"]
     if task in ("humaneval_plus", "mbpp_plus"):
@@ -65,7 +67,9 @@ def generate(question, prompt, config, post):
             model=config["model"],
             prompt=prompt,
             temperature=0,
-            max_tokens=config["generation_max_tokens"],
+            max_tokens=question.get(
+                "tokens_to_generate", config["generation_max_tokens"]
+            ),
         )
     )
     choice = response["choices"][0]
@@ -124,6 +128,10 @@ def code_grade(record, config, problem, oracle):
 def grade(record, task):
     correct, prediction = False, None
     extra = {}
+    if task.startswith("ruler_"):
+        import ruler
+
+        return ruler.grade(record)
     if task == "math500":
         from math_verify import LatexExtractionConfig, parse, verify
 
@@ -181,7 +189,11 @@ def metrics(records, task):
         truncated=sum(r["finish_reason"] == "length" for r in records),
         mean_completion_tokens=statistics.mean(r["completion_tokens"] for r in records),
     )
-    if task == "ifeval":
+    if task.startswith("ruler_"):
+        import ruler
+
+        result.update(ruler.metrics(records))
+    elif task == "ifeval":
         result.update(
             strict_prompt_accuracy=result["accuracy"],
             loose_prompt_accuracy=sum(
@@ -243,8 +255,14 @@ def run_eval(config, output, url, limit=None, tokenizer=None, post=None):
             add_generation_prompt=True,
             enable_thinking=False,
         )
+        + q.get("answer_prefix", "")
         for q in questions
     }
+    if task.startswith("ruler_"):
+        import ruler
+
+        for q in questions:
+            ruler.check_budget(prompts[q["id"]], q, config, tokenizer)
 
     with concurrent.futures.ThreadPoolExecutor(config["chat_concurrency"]) as pool:
         records = list(

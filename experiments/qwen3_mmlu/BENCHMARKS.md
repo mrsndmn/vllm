@@ -23,7 +23,8 @@ The suite uses mathematical equivalence for MATH-500, Google's strict/loose
 prompt and instruction checks for IFEval, generated answer letters for MMLU-Pro
 and GPQA Diamond, and base plus expanded executable tests for HumanEval+/MBPP+.
 IFEval receives its original instructions. No task uses likelihood scoring or
-forced-answer continuations. Truncated generations count as incorrect.
+forced-answer continuations in these six benchmark families. The long-context
+RULER extension uses the official answer prefixes; see [RULER.md](RULER.md). Truncated generations count as incorrect.
 These are our zero-shot chat protocols, not reproductions of few-shot leaderboards.
 
 Prepare with the configured evaluation environment:

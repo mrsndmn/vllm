@@ -2081,3 +2081,61 @@ def test_watcher_retains_and_retries_failed_resume_delivery(
     assert "resume_error" not in result
     assert "resume_worker_returned_at_utc" in result
     assert attempts[0]["checked_at_utc"] == attempts[1]["checked_at_utc"]
+
+
+def test_ruler_multivalue_partial_credit_and_qa_aliases():
+    import ruler
+
+    record = dict(
+        id="niah_multivalue/0",
+        subtask="niah_multivalue",
+        answers=["123", "456"],
+        response="The value is 123.",
+        finish_reason="length",
+        completion_tokens=128,
+        input_tokens=8000,
+    )
+    scored = ruler.grade(record)
+    assert scored["score"] == 0.5
+    assert not scored["correct"]
+    alias = ruler.grade(dict(record, subtask="qa_1", answers=["value", "other"]))
+    assert alias["score"] == 1
+    assert alias["correct"]
+    full = ruler.grade(dict(record, response="123 and 456", finish_reason="stop"))
+    # Official RULER counts matched answers even on a generation cap.
+    result = benchmark_eval.metrics([scored, full, alias], "ruler_8k")
+    assert result["subtask_scores"] == {"niah_multivalue": 0.75, "qa_1": 1}
+    assert result["accuracy"] == 0.875
+    assert result["truncated"] == 2
+
+
+def test_ruler_rejects_overflow_without_truncating_needle():
+    import ruler
+
+    class Tokenizer:
+        def encode(self, text, add_special_tokens):
+            assert not add_special_tokens
+            return list(text)
+
+    question = dict(id="niah_single_1/0", tokens_to_generate=3, input_tokens=6)
+    prompt = "needle"
+    assert ruler.check_budget(prompt, question, {"max_model_len": 9}, Tokenizer()) == 6
+    with pytest.raises(ValueError, match="exceeds context budget"):
+        ruler.check_budget(prompt, question, {"max_model_len": 8}, Tokenizer())
+    with pytest.raises(ValueError, match="tokenizer changed"):
+        ruler.check_budget("changed", question, {"max_model_len": 12}, Tokenizer())
+
+
+def test_ruler_long_context_arms_preserve_zeroing_and_share_server_settings():
+    rows = run_jobs.job_configs("suite_ruler_*")
+    assert len(rows) == 21
+    for row in rows:
+        assert row["max_model_len"] == row["benchmark"]["context_length"]
+        assert row["chat_concurrency"] == row["max_num_seqs"] == 2
+        assert row["memory_fraction"] == 0.9
+        reference = run_jobs.job_configs(
+            "gsm8k" + row["name"].removeprefix("suite_" + row["task"])
+        )[0]
+        assert {k: v for k, v in row.items() if k.startswith("round_")} == {
+            k: v for k, v in reference.items() if k.startswith("round_")
+        }

@@ -267,6 +267,52 @@ BENCHMARK_CONFIGS = {
         expected_questions=378,
     ),
 }
+RULER_CONFIG = dict(
+    dataset="NVIDIA/RULER",
+    revision="c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a",
+    source_sha256="e8fb7531a2c16c7d3cec4c6b1c58958adecca365a8a08a7d052f6058b04400bc",
+    samples_per_task=100,
+    preparation_workers=4,
+    random_seed=42,
+    template_reserve=64,
+    expected_questions=1300,
+    subtasks=[
+        "niah_single_1",
+        "niah_single_2",
+        "niah_single_3",
+        "niah_multikey_1",
+        "niah_multikey_2",
+        "niah_multikey_3",
+        "niah_multivalue",
+        "niah_multiquery",
+        "vt",
+        "cwe",
+        "fwe",
+        "qa_1",
+        "qa_2",
+    ],
+    corpus_urls={
+        "squad.json": "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json",
+        "hotpotqa.json": "https://huggingface.co/datasets/namlh2004/hotpotqa/resolve/"
+        "7e54db4656209750ff487f6fdf8e39a66dba136b/hotpot_dev_distractor_v1.json",
+    },
+)
+RULER_CORPUS_SHA256 = {
+    "squad.json": "80a5225e94905956a6446d296ca1093975c4d3b3260f1d6c8f68bc2ab77182d8",
+    "hotpotqa.json": "e3da074df24e8369009918aa5cdbdd254dadcde4c63f7569d36afd6f2268caa8",
+    "PaulGrahamEssays.json": (
+        "8d31e1b660e0f2180bcca6d238e18f77921df9d158611582b860da1762b6d3dd"
+    ),
+}
+RULER_PACKAGES = {
+    "wonderwords": "2.2.0",
+    "html2text": "2025.4.15",
+    "beautifulsoup4": "4.13.5",
+}
+for context_length in (8192, 16384, 32768):
+    BENCHMARK_CONFIGS[f"ruler_{context_length // 1024}k"] = dict(
+        RULER_CONFIG, context_length=context_length
+    )
 BENCHMARK_PACKAGES = {
     "math-verify": "0.9.0",
     "latex2sympy2-extended": "1.11.0",
@@ -299,7 +345,8 @@ for benchmark, settings in BENCHMARK_CONFIGS.items():
                 name="suite_" + benchmark + arm["name"].removeprefix("gsm8k"),
                 task=benchmark,
                 benchmark=settings,
-                benchmark_packages=BENCHMARK_PACKAGES,
+                benchmark_packages=BENCHMARK_PACKAGES
+                | (RULER_PACKAGES if benchmark.startswith("ruler_") else {}),
                 benchmark_data=str(
                     Path(BASE_CONFIG["artifacts"]) / "benchmarks" / benchmark
                 ),
@@ -312,6 +359,15 @@ for benchmark, settings in BENCHMARK_CONFIGS.items():
                 else None,
                 offline_evaluation=True,
             )
+        )
+for row in experiment_configs:
+    if row["task"].startswith("ruler_"):
+        row.update(
+            max_model_len=row["benchmark"]["context_length"],
+            memory_fraction=0.9,
+            max_num_seqs=2,
+            chat_concurrency=2,
+            generation_max_tokens=128,
         )
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"

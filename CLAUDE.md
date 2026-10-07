@@ -15,6 +15,15 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `ruler.py`: adapter around pinned upstream RULER v1 synthetic generators,
+  frozen chat inputs and answer prefixes, token-budget validation, partial-credit
+  substring grading, and macro averaging by subtask. Source configuration lives
+  in `run.py`; `benchmark_data.py` prepares inputs for the same transfer engine.
+  `run_jobs.py --filter 'suite_ruler_*' [--limit N] [--dry]` launches long-context
+  rows. Round-robin inputs make the first smoke batch cover all subtasks.
+  `benchmark_eval.py summarize` validates and compares each length to its own
+  baseline and repeat. See `experiments/qwen3_mmlu/RULER.md`.
+
 - `benchmark_data.py`: prepare pinned transfer datasets and official graders on
   shared storage. `run_jobs.py --filter 'suite_*' [--dry] [--limit N]` launches
   the same baseline/repeat and zeroing arms through the existing MLS path.
