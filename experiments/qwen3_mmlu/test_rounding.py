@@ -1389,8 +1389,13 @@ def test_registered_adaptive_schedules_meet_their_budgets():
         assert len(schedule) == run.GROUPS and budget in run.ADAPTIVE_BUDGETS[site]
         assert set(schedule) <= {0.0, *run.PROFILE_LEVELS[site]}
         assert sum(schedule) / run.GROUPS >= budget - 1e-9
-    names = [c["name"] for c in run_jobs.job_configs("*adapt_*")]
+    names = [c["name"] for c in run_jobs.job_configs("chat_adapt_*")]
     assert len(names) == len(run.ADAPTIVE_SCHEDULES) == len(set(names))
+    gsm8k_adaptive = run_jobs.job_configs("gsm8k_adapt_*")
+    assert len(gsm8k_adaptive) == 1
+    schedule = gsm8k_adaptive[0]["round_activations_quantiles"]
+    assert schedule == run.ADAPTIVE_SCHEDULES[("mlp", 0.8)]
+    assert schedule is not run.ADAPTIVE_SCHEDULES[("mlp", 0.8)]
 
 
 def test_token_stats_signed_moments_and_magnitude_quantiles():
