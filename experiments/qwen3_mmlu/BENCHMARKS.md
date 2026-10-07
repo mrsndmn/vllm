@@ -15,6 +15,8 @@ All dataset revisions, arms, generation budgets, and grader versions live in
 storage, with checksums verified before evaluation. Code reference outputs are
 computed once from the trusted benchmark solutions. Generated code is graded
 with EvalPlus's restricted subprocess execution and time limits in MLS containers.
+The code grader is pinned to upstream source with the polynomial-root progress
+counter fix; its checksum is verified without changing the installed package.
 Do not execute generated code in the interactive workspace.
 
 The suite uses mathematical equivalence for MATH-500, Google's strict/loose
@@ -43,7 +45,14 @@ arms against its baseline and repeat. Artifacts remain outside the checkout.
 
 ## Results
 
-Full evaluations pending.
+All prepared input counts and checksums passed validation. Every mathematical
+gold answer parses, every instruction configuration grades, and all prompts fit
+the server context window. The first five benchmark families passed MLS model
+smoke checks. Full evaluations and the MBPP+ model smoke check are pending.
+
+The regression suite and pre-commit checks passed. Independent review identified
+an upstream EvalPlus polynomial-root counter bug; the corrected upstream grader
+is now pinned and a regression checks acceptance of an alternative valid root.
 
 ## Conclusions
 

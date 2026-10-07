@@ -276,6 +276,16 @@ BENCHMARK_PACKAGES = {
     "tree-sitter": "0.26.0",
     "tree-sitter-python": "0.25.0",
 }
+CODE_GRADER = dict(
+    revision="26d6d00bb1fd0fa37f39c99d5290da67891d1c5e",
+    sha256="3c833c39b842e33f251c83db4347e0a95191909f23b390c12d73ab29a28a4daf",
+    path=str(
+        Path(BASE_CONFIG["artifacts"])
+        / "runtime"
+        / "evalplus-26d6d00bb1fd0fa37f39c99d5290da67891d1c5e"
+        / "evalplus_grader.py"
+    ),
+)
 for benchmark, settings in BENCHMARK_CONFIGS.items():
     for arm in [c for c in experiment_configs if c.get("task") == "gsm8k_chat"]:
         experiment_configs.append(
@@ -297,6 +307,9 @@ for benchmark, settings in BENCHMARK_CONFIGS.items():
                 grading_workers=4,
                 code_min_time_limit=1.0,
                 code_time_limit_factor=4.0,
+                code_grader=CODE_GRADER
+                if benchmark in ("humaneval_plus", "mbpp_plus")
+                else None,
                 offline_evaluation=True,
             )
         )

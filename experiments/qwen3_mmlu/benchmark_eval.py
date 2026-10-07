@@ -6,8 +6,10 @@
 import argparse
 import concurrent.futures
 import csv
+import functools
 import gzip
 import importlib.metadata
+import importlib.util
 import json
 import random
 import statistics
@@ -76,15 +78,29 @@ def generate(question, prompt, config, post):
     )
 
 
+@functools.lru_cache
+def load_code_grader(path, checksum):
+    if benchmark_data.digest(Path(path)) != checksum:
+        raise ValueError("Code grader checksum mismatch")
+    name = "evalplus_transfer_" + checksum
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def code_grade(record, config, problem, oracle):
-    from evalplus.eval import PASS, untrusted_check
     from evalplus.sanitize import sanitize
 
+    grader = load_code_grader(
+        config["code_grader"]["path"], config["code_grader"]["sha256"]
+    )
     solution = sanitize(record["response"], entrypoint=problem["entry_point"])
     statuses = {}
     for kind in ("base", "plus"):
         values, times = oracle[kind]
-        status, _ = untrusted_check(
+        status, _ = grader.untrusted_check(
             config["benchmark"]["dataset"],
             solution,
             problem[kind + "_input"],
@@ -96,7 +112,7 @@ def code_grade(record, config, problem, oracle):
             min_time_limit=config["code_min_time_limit"],
             gt_time_limit_factor=config["code_time_limit_factor"],
         )
-        statuses[kind + "_passed"] = status == PASS
+        statuses[kind + "_passed"] = status == grader.PASS
     return dict(
         **record,
         solution=solution,
@@ -194,6 +210,8 @@ def run_eval(config, output, url, limit=None, tokenizer=None, post=None):
     task = config["task"]
     root = Path(config["benchmark_data"])
     manifest = benchmark_data.validate(root, config["benchmark"])
+    if config.get("code_grader"):
+        load_code_grader(config["code_grader"]["path"], config["code_grader"]["sha256"])
     for package, version in config["benchmark_packages"].items():
         if importlib.metadata.version(package) != version:
             raise RuntimeError(f"Grader version mismatch: {package}")

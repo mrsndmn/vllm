@@ -12,6 +12,7 @@ import json
 import random
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import run
 
@@ -88,6 +89,21 @@ def code_problems(task):
 def prepare(task):
     """Freeze questions, evaluator files, and code oracles before MLS submission."""
     settings = run.BENCHMARK_CONFIGS[task]
+    if task in ("humaneval_plus", "mbpp_plus"):
+        grader = run.CODE_GRADER
+        path = Path(grader["path"])
+        if not path.exists():
+            raw = download(
+                "https://raw.githubusercontent.com/evalplus/evalplus/"
+                + grader["revision"]
+                + "/evalplus/eval/__init__.py"
+            )
+            if hashlib.sha256(raw).hexdigest() != grader["sha256"]:
+                raise ValueError("Upstream code grader checksum mismatch")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
+        if digest(path) != grader["sha256"]:
+            raise ValueError("Code grader checksum mismatch")
     for package, version in run.BENCHMARK_PACKAGES.items():
         if importlib.metadata.version(package) != version:
             raise RuntimeError(f"Grader version mismatch: {package}")

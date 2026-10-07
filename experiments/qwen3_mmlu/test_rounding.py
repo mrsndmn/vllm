@@ -79,8 +79,11 @@ def test_math_transfer_grades_equivalent_answers_and_rejects_truncation():
 def test_code_transfer_requires_base_and_extra_tests_to_pass():
     pytest.importorskip("evalplus")
     pytest.importorskip("tree_sitter_python")
+    if not run.Path(run.CODE_GRADER["path"]).exists():
+        pytest.skip("Pinned grader is prepared by benchmark_data.py")
     config = dict(
         benchmark={"dataset": "humaneval"},
+        code_grader=run.CODE_GRADER,
         code_min_time_limit=0.1,
         code_time_limit_factor=4.0,
     )
@@ -93,6 +96,34 @@ def test_code_transfer_requires_base_and_extra_tests_to_pass():
     )
     assert broken["base_passed"] and not broken["plus_passed"]
     assert not broken["correct"]
+
+
+def test_code_polynomial_oracle_accepts_a_correct_root_without_reference_equality():
+    pytest.importorskip("evalplus")
+    pytest.importorskip("tree_sitter_python")
+    if not run.Path(run.CODE_GRADER["path"]).exists():
+        pytest.skip("Pinned grader is prepared by benchmark_data.py")
+    config = dict(
+        benchmark={"dataset": "humaneval"},
+        code_grader=run.CODE_GRADER,
+        code_min_time_limit=0.1,
+        code_time_limit_factor=4.0,
+    )
+    problem = dict(
+        entry_point="find_zero",
+        base_input=[[[-1.0, 0.0, 1.0]]],
+        plus_input=[[[-1.0, 0.0, 1.0]]],
+        atol=1e-6,
+    )
+    oracle = dict(base=([-1.0], [0.001]), plus=([-1.0], [0.001]))
+    record = dict(response="def find_zero(xs):\n    return 1.0", finish_reason="stop")
+    assert benchmark_eval.code_grade(record, config, problem, oracle)["correct"]
+    assert not benchmark_eval.code_grade(
+        dict(record, response="def find_zero(xs):\n    return 0.0"),
+        config,
+        problem,
+        oracle,
+    )["correct"]
 
 
 def test_prepared_benchmark_rejects_changed_inputs(tmp_path):
