@@ -45,16 +45,33 @@ check covered every subtask; randomized scores matched the upstream grader.
 All 21 MLS evaluations were submitted from commit `cc2553f2a20`. Full job IDs,
 submission logs, dry payloads, data validation, and durable watcher state live at
 `launches/ruler-cc2553f2a20/` under the configured artifacts root. Every job runs
-its model preflight before its full evaluation. GPU results are pending; the
-watcher resumes the bound conversation on failure or complete success.
+its model preflight before its full evaluation. All 21 jobs completed successfully. Each full run contains all 13 subtasks with
+100 examples each and passed its 13-question preflight. Summary validation checked
+configs, manifests, IDs, source question fields, identical comparison prompts,
+and metrics. Regrading all 27,300 saved answers reproduced their scores. Detailed
+validation and per-subtask scores are saved as `results-validation.json` and
+`ruler-subtasks.csv` in the launch directory.
+
+Baseline macro scores are 96.0372%, 95.1333%, and 94.1321% at the three lengths.
+Baseline repeat matches at the shortest and longest lengths and differs by
+-0.0192 percentage points at the middle length. `mlp_q0.5` differs from baseline
+by +0.0231, +0.0808, and +0.0308 percentage points; these small gains are not
+evidence of a statistically established improvement. Other zeroing variants
+lose between 0.1372 and 0.8321 percentage points versus their matching baseline.
 
 ## Conclusions
 
-Compare both the macro score and individual subtask scores across context lengths;
-use baseline repeat variation when interpreting zeroing effects.
+`mlp_q0.5` best preserves the baseline macro score across tested lengths.
+Retrieval and variable tracking stay near ceiling across all variants. The main
+long-context weaknesses are aggregation (especially CWE) and QA; stronger
+zeroing mostly affects these tasks. Baseline repeat measures run variation on
+the same fixed questions, not uncertainty from sampling new questions.
 
 ## Changelog
 
 - 2026-10-07: Added RULER to the existing generative evaluation and MLS paths.
 - 2026-10-07: Validated prepared inputs, passed independent review, submitted
   the full sweep, and started its durable watcher.
+
+- 2026-10-07: Watcher reported successful completion of all 21 jobs; validated
+  complete artifacts and regraded every answer, then recorded transfer results.
