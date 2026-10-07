@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Qwen checkpoint weights</title>
+<title>Checkpoint weights</title>
 <script>%%PLOTLY%%</script>
 <style>
 :root { --surface:#fcfcfb; --text:#0b0b0b; --muted:#52514e; --line:#e4e3df; }
@@ -28,7 +28,7 @@ summary { cursor:pointer; color:var(--text); } code { font-family:ui-monospace,m
 </style>
 </head>
 <body>
-<h1>Qwen checkpoint weights</h1>
+<h1>Checkpoint weights</h1>
 <div class="meta" id="meta">Unpacking embedded report…</div>
 <div id="error" role="alert"></div>
 <div class="controls">
@@ -206,7 +206,13 @@ async function boot() {
     layerCount=1+Math.max(...DATA.records.map(r=>r[1])); expertCount=1+Math.max(...DATA.records.map(r=>r[2]));
     index=new Map();DATA.records.forEach((r,id)=>{const key=`${r[1]}|${r[3]}`; if(!index.has(key))index.set(key,[]);index.get(key).push(id);});
     families.forEach(f=>$('family').append(option(f,f)));
-    $('family').value=families.includes('expert.down_proj')?'expert.down_proj':families[0];
+    document.title=`${DATA.config.model} — checkpoint weights`;
+    document.querySelector('h1').textContent=document.title;
+    $('family').value=['expert.down_proj','mlp.down_proj'].find(f=>families.includes(f))||families[0];
+    if(!expertCount) {
+      $('expert').parentElement.hidden=true;
+      $('experts').parentElement.hidden=true;
+    }
     $('layer').append(option(-1,'Global'));
     for(let l=0;l<layerCount;l++)$('layer').append(option(l,`Layer ${l}`));
     $('layer').value=layerCount?'0':'-1';

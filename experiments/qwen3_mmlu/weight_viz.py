@@ -41,6 +41,17 @@ experiment_configs = [
     }
 ]
 CONFIG = experiment_configs[0]
+experiment_configs.append(
+    dict(
+        CONFIG,
+        name="llama32_1b_weights",
+        model="unsloth/Llama-3.2-1B",
+        snapshot="/home/jovyan/.cache/huggingface/hub/"
+        "models--unsloth--Llama-3.2-1B/snapshots/"
+        "9535bd9b1d1dea6acafbdc4813b728796aeb28da",
+        output=str(run.ARTIFACTS / "weight-viz" / "llama32-1b"),
+    )
+)
 TEMPLATE = Path(__file__).with_suffix(".html")
 STATS = (
     "min",
@@ -204,12 +215,21 @@ def tensor_batches(handle, names, config):
         yield pending
 
 
+def checkpoint_map(snapshot):
+    """Read an indexed checkpoint or enumerate its single safetensors file."""
+    index = snapshot / "model.safetensors.index.json"
+    if index.exists():
+        return json.loads(index.read_text())["weight_map"]
+    with safe_open(snapshot / "model.safetensors", framework="pt", device="cpu") as f:
+        return {name: "model.safetensors" for name in f.keys()}  # noqa: SIM118
+
+
 def collect(config, device, output):
     """Scan each safetensors shard once and checkpoint completed shards to disk."""
     snapshot = Path(config["snapshot"])
-    index = json.loads((snapshot / "model.safetensors.index.json").read_text())
+    weight_map = checkpoint_map(snapshot)
     shards = defaultdict(list)
-    for name, shard in index["weight_map"].items():
+    for name, shard in weight_map.items():
         shards[shard].append(name)
     source_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     fingerprint = hashlib.sha256(
@@ -272,11 +292,11 @@ def collect(config, device, output):
         linear.extend(shard_linear)
         log.extend(shard_log)
         print(
-            f"Scanned {shard}: {len(records)}/{len(index['weight_map'])} tensors, "
+            f"Scanned {shard}: {len(records)}/{len(weight_map)} tensors, "
             f"{time.monotonic() - start:.0f}s",
             flush=True,
         )
-    if len(records) != len(index["weight_map"]):
+    if len(records) != len(weight_map):
         raise RuntimeError("Not every checkpoint tensor was analysed")
     return records, np.array(stats), np.array(linear), np.array(log), analysis
 
@@ -313,21 +333,23 @@ def render(records, stats, linear, log, config, provenance):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--name",
+        choices=[c["name"] for c in experiment_configs],
+        default=CONFIG["name"],
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--output", type=Path)
     parser.add_argument(
         "--render-only", action="store_true", help="require shard caches"
     )
     args = parser.parse_args()
-    config = CONFIG.copy()
+    config = next(c.copy() for c in experiment_configs if c["name"] == args.name)
     torch.set_num_threads(config["cpu_threads"])
     output = args.output or Path(config["output"])
     output.mkdir(parents=True, exist_ok=True)
     if args.render_only:
-        index = json.loads(
-            (Path(config["snapshot"]) / "model.safetensors.index.json").read_text()
-        )
-        for shard in set(index["weight_map"].values()):
+        for shard in set(checkpoint_map(Path(config["snapshot"])).values()):
             if not (output / (shard + ".npz")).exists():
                 parser.error(f"Missing cache for {shard}")
     torch.backends.cuda.matmul.allow_tf32 = False

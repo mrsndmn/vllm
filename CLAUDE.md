@@ -89,14 +89,16 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
 - `experiments/qwen3_mmlu/rounding_server.py`: internal wrapper CLI; forwards
   standard vLLM server arguments and selects `rounding_worker.RoundingWorker`.
 - `experiments/qwen3_mmlu/weight_viz.py [--device cuda:0] [--output DIR]
-  [--render-only]`: checkpoint-only weight analysis, no inference/server or MLS
-  launch. Reads the configured safetensors, caches each shard's characteristics
+  [--name qwen3_weights|llama32_1b_weights] [--render-only]`: checkpoint-only
+  weight analysis, no inference/server or MLS launch. Supports indexed shards
+  and a single safetensors file. Reads the configured safetensors, caches characteristics
   and distributions under the analysis output, and writes offline `weights.html`.
   `--render-only` requires all shard caches. The HTML supports layer/family/expert
   selection, metric maps, pooled expert distributions and layer comparison.
   Configuration is in the script's `experiment_configs`; approximate quantiles
   and stable rank are labelled. The actual HTML byte limit is enforced before
   replacing the output. Unit and Node helper checks extend `test_rounding.py`.
+  Dense models hide expert controls; the title and layer ranges reflect the model.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
   batching, and finished-request cleanup; only installed vLLM 0.14.1, eager,
   unquantized Qwen3 MoE on one GPU with its Triton expert implementation.

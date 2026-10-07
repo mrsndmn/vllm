@@ -312,6 +312,24 @@ def test_weight_checkpoint_scan_covers_each_expert_and_resumes(tmp_path):
         weight_viz.collect(dict(config, seed=43), "cpu", tmp_path)
 
 
+def test_weight_single_file_checkpoint_covers_dense_layers_and_global_weights(tmp_path):
+    from safetensors.torch import save_file
+
+    weights = {
+        "model.layers.0.mlp.down_proj.weight": torch.eye(2),
+        "model.embed_tokens.weight": torch.ones(3, 2),
+        "model.norm.weight": torch.ones(2),
+    }
+    save_file(weights, tmp_path / "model.safetensors")
+    config = dict(weight_viz.CONFIG, snapshot=str(tmp_path))
+    records, stats, linear, log, analysis = weight_viz.collect(config, "cpu", tmp_path)
+    assert {r[0] for r in records} == set(weights)
+    assert all(r[2] == -1 for r in records)
+    assert sum(math.prod(r[4]) for r in records) == 12
+    assert linear.sum() == log.sum() == 12
+    assert list(analysis) == ["model.safetensors"]
+
+
 def test_weight_report_embeds_offline_data_and_enforces_actual_byte_limit():
     import gzip
 
