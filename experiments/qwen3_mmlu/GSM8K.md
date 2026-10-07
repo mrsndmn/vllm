@@ -49,6 +49,20 @@ passed; independent adversarial review returned APPROVE.
 Full benchmark results are pending. MLS payloads and dispatch were tested with
 the existing test fixtures. The missing `regex` dependency in the MLS client
 environment was installed before preparing submission of the selected sweep.
+All seven selected jobs were submitted from commit `1fa8ce7561`; MLS reports
+them running and each job has created its vLLM server log. The expanded suite
+passed all 113 tests, pre-commit, and independent adversarial review.
+
+Submission manifest and logs are under the configured artifacts directory at
+`launches/gsm8k-1fa8ce7561/`. Complete MLS job identifiers:
+
+- `gsm8k_baseline`: `lm-mpi-job-9cd1e00c-edbc-49a8-8026-af480a7dd273`
+- `gsm8k_baseline_repeat`: `lm-mpi-job-b5e5f68a-b484-4c05-a061-ea2d058fdf88`
+- `gsm8k_mlp_q0.5`: `lm-mpi-job-071dd433-4e30-4222-bc9f-961f58447d90`
+- `gsm8k_mlp_q0.8`: `lm-mpi-job-74449975-8e4d-4cc0-9265-3762239dea98`
+- `gsm8k_moe_out_q0.4`: `lm-mpi-job-993ab992-4879-4cdd-b716-748e5b18efdf`
+- `gsm8k_block_q0.25`: `lm-mpi-job-1ebc442a-2335-4c49-a166-243775651c5c`
+- `gsm8k_adapt_mlp_b0.8`: `lm-mpi-job-03884c77-29c1-4eb6-97a0-dd04707e5640`
 
 ## Conclusions
 
@@ -62,3 +76,4 @@ The adaptive schedule is reused without tuning on GSM8K.
   task-specific summaries, and regression checks.
 - 2026-10-07: Completed the local model smoke check and independent review.
 - 2026-10-07: Registered the selected MMLU zeroing variants for transfer to GSM8K.
+- 2026-10-07: Submitted all seven full GSM8K jobs and verified MLS running status.
