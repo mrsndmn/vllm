@@ -15,8 +15,10 @@ import benchmark_data
 import benchmark_eval
 import chat_eval
 import compression
+import embedding_viz
 import gsm8k
 import hidden_viz
+import numpy as np
 import pytest
 import run_jobs
 import sensitivity
@@ -2233,3 +2235,54 @@ def test_ruler_source_hydrates_lfs_and_reuses_cache_after_python_import(
     )
     assert ruler.source(settings) == (root, provenance)
     assert len(calls) == 2
+
+
+def test_embedding_channel_stats_distinguish_bias_from_variation():
+    """Constant channels retain RMS/energy but have no population variance."""
+    result = embedding_viz.summarize(np.array([[1.0, 2.0], [3.0, 2.0]]), axis=0)
+    assert result["mean"] == [2.0, 2.0]
+    assert result["std"] == [1.0, 0.0]
+    assert result["rms"] == pytest.approx([math.sqrt(5), 2.0])
+    assert result["energy_share"] == pytest.approx([10 / 18, 8 / 18])
+    assert result["excess_kurtosis"][0] == -2.0
+    assert math.isnan(result["excess_kurtosis"][1])
+
+
+def test_embedding_pair_cosines_preserve_sign_and_undefined_zero_norm():
+    """Opposed vectors must be negative; zero-norm pairs are undefined."""
+    a = np.array([[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]])
+    b = np.array([[1.0, 0.0], [0.0, -1.0], [1.0, 0.0]])
+    result = embedding_viz.cosines(a, b, axis=1)
+    assert result[:2] == pytest.approx([1.0, -1.0])
+    assert math.isnan(result[2])
+
+
+def test_embedding_viewer_program_parses_and_decodes_exact_bf16():
+    """Offline browser code must parse and retain tiny and signed BF16 weights."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    template = (
+        embedding_viz.Path(embedding_viz.__file__).with_suffix(".html").read_text()
+    )
+    program = template.split("'use strict';", 1)[1].split("</script>", 1)[0]
+    subprocess.run(
+        [node, "--check"], input=program, text=True, check=True, capture_output=True
+    )
+    decoder = next(
+        line for line in program.splitlines() if line.startswith("function bf16(")
+    )
+    rows = torch.tensor([1.0, -2.0, 0.0, 1e-9], dtype=torch.bfloat16)
+    encoded = embedding_viz.base64.b64encode(
+        rows.view(torch.uint16).numpy().astype("<u2").tobytes()
+    ).decode()
+    script = (
+        decoder
+        + "\nconsole.log(JSON.stringify(Array.from(bf16("
+        + json.dumps(encoded)
+        + "))));"
+    )
+    output = subprocess.run(
+        [node, "-e", script], text=True, capture_output=True, check=True
+    )
+    assert json.loads(output.stdout) == rows.float().tolist()
