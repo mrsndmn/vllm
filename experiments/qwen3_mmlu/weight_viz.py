@@ -62,6 +62,11 @@ experiment_configs.append(
         "models--EleutherAI--pythia-160m/snapshots/"
         "50f5173d932e8e61f858120bcb800b97af589f46",
         output=str(run.ARTIFACTS / "weight-viz" / "pythia-160m"),
+        buffer_suffixes=[
+            ".attention.bias",
+            ".attention.masked_bias",
+            ".attention.rotary_emb.inv_freq",
+        ],
     )
 )
 STATS = (
@@ -238,10 +243,20 @@ def checkpoint_map(snapshot):
         return {name: "model.safetensors" for name in f.keys()}  # noqa: SIM118
 
 
+def parameter_map(config):
+    """Exclude configured non-parameter buffers, retaining projection biases."""
+    buffers = tuple(config.get("buffer_suffixes", []))
+    return {
+        name: shard
+        for name, shard in checkpoint_map(Path(config["snapshot"])).items()
+        if not name.endswith(buffers)
+    }
+
+
 def collect(config, device, output):
     """Scan each safetensors shard once and checkpoint completed shards to disk."""
     snapshot = Path(config["snapshot"])
-    weight_map = checkpoint_map(snapshot)
+    weight_map = parameter_map(config)
     shards = defaultdict(list)
     for name, shard in weight_map.items():
         shards[shard].append(name)
@@ -363,7 +378,7 @@ def main():
     output = args.output or Path(config["output"])
     output.mkdir(parents=True, exist_ok=True)
     if args.render_only:
-        for shard in set(checkpoint_map(Path(config["snapshot"])).values()):
+        for shard in set(parameter_map(config).values()):
             if not (output / (shard + ".npz")).exists():
                 parser.error(f"Missing cache for {shard}")
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -375,6 +390,9 @@ def main():
         "render": {"torch": torch.__version__},
         "tensor_count": len(records),
         "parameter_count": sum(math.prod(r[4]) for r in records),
+        "excluded_checkpoint_buffers": sorted(
+            set(checkpoint_map(Path(config["snapshot"]))) - {r[0] for r in records}
+        ),
     }
     page = render(records, stats, linear, log, config, provenance)
     path = output / "weights.html"

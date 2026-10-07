@@ -320,11 +320,19 @@ def test_weight_single_file_checkpoint_covers_dense_layers_and_global_weights(tm
         "gpt_neox.layers.0.mlp.dense_4h_to_h.bias": torch.zeros(2),
         "gpt_neox.embed_in.weight": torch.ones(3, 2),
         "gpt_neox.final_layer_norm.weight": torch.ones(2),
+        "gpt_neox.layers.0.attention.bias": torch.ones(1, 1, 2, 2, dtype=torch.uint8),
+        "gpt_neox.layers.0.attention.masked_bias": torch.tensor(-10000.0),
+        "gpt_neox.layers.0.attention.rotary_emb.inv_freq": torch.ones(2),
     }
     save_file(weights, tmp_path / "model.safetensors")
-    config = dict(weight_viz.CONFIG, snapshot=str(tmp_path))
+    pythia = next(
+        c for c in weight_viz.experiment_configs if c["name"] == "pythia160m_weights"
+    )
+    config = dict(pythia, snapshot=str(tmp_path))
     records, stats, linear, log, analysis = weight_viz.collect(config, "cpu", tmp_path)
-    assert {r[0] for r in records} == set(weights)
+    assert {r[0] for r in records} == {
+        n for n in weights if not n.endswith(tuple(config["buffer_suffixes"]))
+    }
     assert all(r[2] == -1 for r in records)
     assert {tuple(r[1:4]) for r in records} == {
         (0, -1, "mlp.dense_4h_to_h"),

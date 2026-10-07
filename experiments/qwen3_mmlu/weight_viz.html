@@ -228,6 +228,8 @@ async function boot() {
       `${DATA.config.power_starts} starts, seed ${DATA.config.seed}. Data and plotting library are embedded; no network required.`;
     const backends=[...new Set(Object.values(DATA.provenance.analysis_shards||{}).map(s=>`${s.device}, Torch ${s.torch}`))];
     if(backends.length) $('analysis-note').textContent+=` Computed on: ${backends.join('; ')}${backends.length>1?' (mixed shard backends)':''}. Per-shard code fingerprints are embedded in the report.`;
+    const excluded=DATA.provenance.excluded_checkpoint_buffers||[];
+    if(excluded.length) $('analysis-note').textContent+=` ${excluded.length} non-parameter checkpoint buffers excluded (listed in embedded provenance).`;
     for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour']) {
       $(id).addEventListener('change',()=>{
         if(id==='family') {
