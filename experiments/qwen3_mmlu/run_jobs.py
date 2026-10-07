@@ -4,7 +4,7 @@
 """Submit MLSpace jobs for run.py registry rows with launcher="mls".
 
 Each job serves one row inside its container (`run.py job`) and runs the
-generative MMLU STEM check (`chat_eval.py`).
+generative MMLU STEM or GSM8K evaluation (`chat_eval.py`).
 Run with the environment that provides the shared `mls` client, e.g.
 /home/jovyan/.mlspace/envs/arkhip/bin/python experiments/qwen3_mmlu/run_jobs.py --dry
 """
@@ -195,7 +195,7 @@ def main():
     if args.limit is not None and args.limit <= 0:
         parser.error("--limit must be positive")
     if args.analysis and args.limit:
-        parser.error("--limit is for MMLU jobs, not compression analysis")
+        parser.error("--limit is for evaluation jobs, not compression analysis")
     launch(args)
 
 

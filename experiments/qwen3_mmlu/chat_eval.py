@@ -1,9 +1,12 @@
-"""Generative chat-format MMLU STEM evaluation through the local rounding server.
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+"""Generative MMLU STEM and GSM8K evaluation through the local rounding server.
 
 Each sampled question is asked zero-shot with the model's chat template (thinking
 disabled). The model reasons briefly and ends with "Answer: X". Reasoning is
 capped; a capped or answer-less response is continued inside the same assistant
-turn with a forced-answer suffix and a few tokens, from which the letter is
+turn with a forced-answer suffix and a few tokens, from which the answer is
 parsed. `summarize` validates finished MLSpace runs and compares them.
 """
 
@@ -12,12 +15,14 @@ import concurrent.futures
 import csv
 import json
 import random
-import re
 import statistics
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+import gsm8k
+import regex as re
 
 TASK = "mmlu_stem_chat"
 PROMPT = (
@@ -128,10 +133,15 @@ def score_reference(prompt_ids, segments, post, config):
     return {"reference_tokens": len(kept), "reference_logprob": sum(kept)}
 
 
-def chat_prompt(tokenizer, question):
-    content = PROMPT.format(
-        question=question["question"], **dict(zip("ABCD", question["choices"]))
-    )
+def chat_prompt(tokenizer, question, task=TASK):
+    if task == gsm8k.TASK:
+        content = gsm8k.PROMPT.format(question=question["question"])
+    elif task == TASK:
+        content = PROMPT.format(
+            question=question["question"], **dict(zip("ABCD", question["choices"]))
+        )
+    else:
+        raise ValueError(f"Unsupported generative task: {task}")
     return tokenizer.apply_chat_template(
         [{"role": "user", "content": content}],
         tokenize=False,
@@ -141,7 +151,10 @@ def chat_prompt(tokenizer, question):
 
 
 def answer(question, prompt, post, config):
-    """Two-stage greedy answer: capped reasoning, then a forced letter if needed."""
+    """Two-stage greedy answer: capped reasoning, then a forced answer if needed."""
+    numeric = config.get("task", TASK) == gsm8k.TASK
+    parse_final = gsm8k.final_answer if numeric else final_answer
+    parse_forced = gsm8k.numeric_answer if numeric else forced_answer
     body = {"model": config["model"], "temperature": 0}
     first = post(
         {**body, "prompt": prompt, "max_tokens": config["chat_max_reasoning_tokens"]}
@@ -155,8 +168,8 @@ def answer(question, prompt, post, config):
         "reasoning_tokens": first["usage"]["completion_tokens"],
         "finish_reason": choice["finish_reason"],
     }
-    letter = None if capped else final_answer(choice["text"])
-    if letter:
+    prediction = None if capped else parse_final(choice["text"])
+    if prediction is not None:
         record["mode"] = "natural"
     else:
         suffix = INTERRUPTED if capped else MISSING
@@ -170,9 +183,11 @@ def answer(question, prompt, post, config):
         record["forced_suffix"] = suffix
         record["forced_text"] = second["choices"][0]["text"]
         record["mode"] = "forced_cap" if capped else "forced_missing"
-        letter = forced_answer(record["forced_text"])
-    record["prediction"] = letter
-    record["correct"] = letter == question["answer"]
+        prediction = parse_forced(record["forced_text"])
+        if numeric and second["choices"][0]["finish_reason"] == "length":
+            prediction = None
+    record["prediction"] = prediction
+    record["correct"] = prediction is not None and prediction == question["answer"]
     return record
 
 
@@ -212,7 +227,7 @@ def summarize_records(records, config):
             }
         }
     return {
-        "task": TASK,
+        "task": config.get("task", TASK),
         "questions": len(records),
         "correct": sum(r["correct"] for r in records),
         "accuracy": sum(r["correct"] for r in records) / len(records),
@@ -227,7 +242,7 @@ def summarize_records(records, config):
             s: statistics.mean(r["correct"] for r in records if r["subject"] == s)
             for s in subjects
         },
-        "prompt": PROMPT,
+        "prompt": gsm8k.PROMPT if config.get("task") == gsm8k.TASK else PROMPT,
         "interrupted_suffix": INTERRUPTED,
         "missing_suffix": MISSING,
         **{key: config[key] for key in config if key.startswith("chat_")},
@@ -235,9 +250,10 @@ def summarize_records(records, config):
     }
 
 
-def run_eval(
-    config, output, url, limit=None, load=load_test_split, post=None, tokenizer=None
-):
+def run_eval(config, output, url, limit=None, load=None, post=None, tokenizer=None):
+    task = config.get("task", TASK)
+    if task not in (TASK, gsm8k.TASK):
+        raise ValueError(f"Unsupported generative task: {task}")
     if tokenizer is None:
         from transformers import AutoTokenizer
 
@@ -246,11 +262,15 @@ def run_eval(
     if reference:  # Same questions as the reference run, in its order.
         references = reference_records(reference, limit)
         fields = ("subject", "index", "question", "choices", "answer")
-        questions = [{key: r[key] for key in fields} for r in references]
+        questions = [{key: r[key] for key in fields if key in r} for r in references]
+    elif task == gsm8k.TASK:
+        questions = gsm8k.select_questions(config, limit, load)
     else:
-        questions = select_questions(config, limit or config["chat_per_subject"], load)
+        questions = select_questions(
+            config, limit or config["chat_per_subject"], load or load_test_split
+        )
     post = post or poster(url)
-    prompts = [chat_prompt(tokenizer, question) for question in questions]
+    prompts = [chat_prompt(tokenizer, question, task) for question in questions]
     with concurrent.futures.ThreadPoolExecutor(config["chat_concurrency"]) as pool:
         records = list(
             pool.map(lambda q, p: answer(q, p, post, config), questions, prompts)
@@ -293,7 +313,7 @@ def layer_zero_shares(output):
     return shares
 
 
-def finished_runs(pattern="*"):
+def finished_runs(pattern="*", task=TASK):
     """(config, output, records by question) of finished chat runs matching a glob."""
     import fnmatch
 
@@ -303,14 +323,18 @@ def finished_runs(pattern="*"):
     for config in run.experiment_configs:
         name = config.get("name", "")
         marker = run.job_root(name, None) / "done.json"
-        if config.get("task") != TASK or not fnmatch.fnmatchcase(name, pattern):
+        if config.get("task") != task or not fnmatch.fnmatchcase(name, pattern):
             continue
         if not marker.exists():
             continue
         output = Path(json.loads(marker.read_text())["output"])
         records = [json.loads(line) for line in (output / "samples.jsonl").open()]
         keys = {(r["subject"], r["index"]) for r in records}
-        expected = len(config["chat_subjects"]) * config["chat_per_subject"]
+        expected = (
+            config["chat_expected_questions"]
+            if task == gsm8k.TASK
+            else len(config["chat_subjects"]) * config["chat_per_subject"]
+        )
         assert len(records) == len(keys) == expected, output
         assert all(r["correct"] == (r["prediction"] == r["answer"]) for r in records)
         runs[config["name"]] = (
@@ -321,13 +345,14 @@ def finished_runs(pattern="*"):
     return runs
 
 
-def summarize(pattern="*", baseline="chat_baseline"):
+def summarize(pattern="*", baseline=None, task=TASK):
     """Validate finished chat runs and write summary CSV/JSON with answer changes."""
     import run
 
-    runs = finished_runs(pattern)
+    baseline = baseline or ("gsm8k_baseline" if task == gsm8k.TASK else "chat_baseline")
+    runs = finished_runs(pattern, task)
     if baseline not in runs:
-        runs = {**finished_runs(baseline), **runs}
+        runs = {**finished_runs(baseline, task), **runs}
     reference = runs.get(baseline, (None, None, None))[2]
     rows = []
     for name, (config, output, records) in runs.items():
@@ -335,6 +360,7 @@ def summarize(pattern="*", baseline="chat_baseline"):
         shares = layer_zero_shares(output)
         row = {
             "experiment": name,
+            "task": task,
             "site": config["round_activations_site"],
             "epsilon": config["round_activations_eps"],
             "quantile": config["round_activations_quantile"],
@@ -352,6 +378,8 @@ def summarize(pattern="*", baseline="chat_baseline"):
         if "reference" in result:
             row["reference_nll_per_token"] = result["reference"]["nll_per_token"]
         if reference and name != baseline:
+            if records.keys() != reference.keys():
+                raise ValueError(f"Question set differs from baseline: {name}")
             row["changed_vs_baseline"] = sum(
                 records[k]["prediction"] != reference[k]["prediction"] for k in records
             )
@@ -365,7 +393,8 @@ def summarize(pattern="*", baseline="chat_baseline"):
     if not rows:
         raise SystemExit("No completed chat runs")
     suffix = "" if pattern == "*" else "-" + re.sub(r"[^\w.-]+", "_", pattern)
-    stem = run.ARTIFACTS / f"rounding-chat-sweep{suffix}"
+    prefix = "rounding-gsm8k-sweep" if task == gsm8k.TASK else "rounding-chat-sweep"
+    stem = run.ARTIFACTS / f"{prefix}{suffix}"
     with stem.with_name(stem.name + "-summary.csv").open("w", newline="") as stream:
         fields = list(dict.fromkeys(key for row in rows for key in row))
         writer = csv.DictWriter(stream, fieldnames=fields)
@@ -384,9 +413,10 @@ def main():
     parser.add_argument("--url")
     parser.add_argument("--limit", type=int, help="Questions per subject")
     parser.add_argument("--filter", default="*", help="Run-name glob for summarize")
+    parser.add_argument("--task", choices=[TASK, gsm8k.TASK], default=TASK)
     args = parser.parse_args()
     if args.action == "summarize":
-        summarize(args.filter)
+        summarize(args.filter, task=args.task)
     else:
         config = json.loads(args.config.read_text())
         run_eval(config, args.output, args.url, args.limit)

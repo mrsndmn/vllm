@@ -13,6 +13,7 @@ import sys
 
 import chat_eval
 import compression
+import gsm8k
 import hidden_viz
 import pytest
 import run_jobs
@@ -606,8 +607,12 @@ def test_registry_is_generative_only():
     names = [c["name"] for c in run.experiment_configs]
     assert len(names) == len(set(names)) == len(run_jobs.job_configs())
     for config in run.experiment_configs:
-        assert config["name"].startswith(("chat_", "prof_"))
-        assert {k: config[k] for k in run.CHAT_CONFIG} == run.CHAT_CONFIG
+        assert config["name"].startswith(("chat_", "prof_", "gsm8k_"))
+        if config["task"] == gsm8k.TASK:
+            assert "chat_subjects" not in config and "chat_per_subject" not in config
+            assert config["chat_expected_questions"] == 1319
+        else:
+            assert {k: config[k] for k in run.CHAT_CONFIG} == run.CHAT_CONFIG
 
 
 class FakeServer:
@@ -1591,3 +1596,145 @@ def test_viewer_capture_records_every_site_per_layer():
                     assert torch.allclose(mlp, act[0], atol=1e-6)
                     assert torch.allclose(out, expert(row)[0], atol=1e-6)
     assert torch.equal(argmax, logits.argmax(dim=-1))
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Answer: 1,200.00", "1200"),
+        ("**Answer:** $0.00$", "0"),
+        (r"Answer: \boxed{-12.50}", "-12.5"),
+        ("Answer: +42", "42"),
+        ("Reasoning contains 42 but no final answer", None),
+        ("Answer: 42\nAnswer: uncertain", None),
+        ("Answer: 2 + 3", None),
+        ("Answer: 1/2", None),
+        ("Answer: 12,34", None),
+        ("Answer: 42 or 43", None),
+        ("Answer: 42e3", None),
+    ],
+)
+def test_gsm8k_final_answer_normalizes_only_unambiguous_numbers(text, expected):
+    assert gsm8k.final_answer(text) == expected
+
+
+def test_gsm8k_eval_uses_test_gold_without_leaking_solution(tmp_path):
+    config = dict(run.GSM8K_CONFIG, chat_expected_questions=3)
+    data = [
+        {"question": f"Compute {n} + {n}", "answer": f"SECRET solution\n#### {2 * n}"}
+        for n in range(3)
+    ]
+    calls = []
+
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            assert not kwargs["enable_thinking"]
+            return messages[0]["content"]
+
+    def post(body):
+        calls.append(body)
+        n = int(body["prompt"].split("Compute ")[1][0])
+        return {
+            "choices": [{"text": f"Answer: {2 * n}.0", "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 4},
+        }
+
+    result = chat_eval.run_eval(
+        config,
+        tmp_path,
+        "unused",
+        load=lambda c: data,
+        post=post,
+        tokenizer=Tokenizer(),
+    )
+    assert result["task"] == gsm8k.TASK and result["questions"] == 3
+    assert result["accuracy"] == 1 and result["unparsed"] == 0
+    assert all("SECRET" not in call["prompt"] for call in calls)
+    records = list(
+        map(json.loads, (tmp_path / "samples.jsonl").read_text().splitlines())
+    )
+    assert [r["prediction"] for r in records] == ["0", "2", "4"]
+    subset = gsm8k.select_questions(config, 2, lambda c: data)
+    assert subset == gsm8k.select_questions(config, 2, lambda c: data)
+    assert len(subset) == 2
+    with pytest.raises(ValueError, match="gold answer"):
+        gsm8k.select_questions(
+            config, load=lambda c: [dict(r, answer="bad") for r in data]
+        )
+
+
+@pytest.mark.parametrize("finish", ["stop", "length"])
+def test_gsm8k_forced_number_rejects_truncated_continuations(finish):
+    calls = []
+
+    def post(body):
+        calls.append(body)
+        return {
+            "choices": [
+                {
+                    "text": "reasoning" if len(calls) == 1 else " 1,200.00",
+                    "finish_reason": "length" if len(calls) == 1 else finish,
+                }
+            ],
+            "usage": {"completion_tokens": 8},
+        }
+
+    question = {"subject": "gsm8k", "index": 0, "question": "Q", "answer": "1200"}
+    record = chat_eval.answer(question, "prompt", post, run.GSM8K_CONFIG)
+    assert record["mode"] == "forced_cap"
+    assert record["prediction"] == ("1200" if finish == "stop" else None)
+    assert record["correct"] == (finish == "stop")
+    assert calls[1]["max_tokens"] == run.GSM8K_CONFIG["chat_max_answer_tokens"]
+
+
+def test_gsm8k_local_eval_and_mls_payload_use_shared_launcher(tmp_path, monkeypatch):
+    calls = fake_eval_server(
+        tmp_path,
+        monkeypatch,
+        {
+            "site": "mlp",
+            "epsilon": 0.0,
+            "quantile": 0.0,
+        },
+    )
+    run.select("gsm8k_baseline")
+    output = run.evaluate(2)
+    assert output.parent == tmp_path / "gsm8k-smoke"
+    stored = json.loads((output / "experiment.json").read_text())
+    assert stored["task"] == gsm8k.TASK
+    assert "HF_DATASETS_OFFLINE" not in calls[0][1]["env"]
+    config = run_jobs.job_configs("gsm8k_baseline")[0]
+    payload = run_jobs.payload(config, tmp_path, 2, "SR004")
+    assert payload["script"].endswith("run.py job --name gsm8k_baseline --limit 2")
+
+
+def test_gsm8k_summary_keeps_baseline_separate_from_mmlu(tmp_path, monkeypatch):
+    configs = [
+        dict(c, chat_expected_questions=2)
+        for c in run.experiment_configs
+        if c["task"] == gsm8k.TASK
+    ]
+    monkeypatch.setattr(run, "experiment_configs", configs)
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    write_chat_run(tmp_path, "gsm8k_baseline", ["A", "A"])
+    write_chat_run(tmp_path, "gsm8k_baseline_repeat", ["A", None])
+    for config in configs:
+        marker = run.job_root(config["name"], None) / "done.json"
+        output = run.Path(json.loads(marker.read_text())["output"])
+        records = list(
+            map(json.loads, (output / "samples.jsonl").read_text().splitlines())
+        )
+        for index, record in enumerate(records):
+            record.update(subject="gsm8k", index=index, answer="42")
+            record["prediction"] = "42" if record["prediction"] else None
+        (output / "samples.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in records)
+        )
+        (output / "results.json").write_text(
+            json.dumps(chat_eval.summarize_records(records, config))
+        )
+    rows = {row["experiment"]: row for row in chat_eval.summarize(task=gsm8k.TASK)}
+    assert rows["gsm8k_baseline"]["accuracy_percent"] == 100
+    assert rows["gsm8k_baseline_repeat"]["broken_vs_baseline"] == 1
+    assert (tmp_path / "rounding-gsm8k-sweep-summary.csv").exists()
+    assert not (tmp_path / "rounding-chat-sweep-summary.csv").exists()

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Local persistent Qwen3 serving and the generative MMLU STEM evaluation."""
 
 import argparse
@@ -183,6 +186,26 @@ experiment_configs += [
         round_activations_quantile=quantile,
     )
     for quantile in (0.4, 0.5, 0.7, 0.8, 0.9, 0.95, 0.99)
+]
+GSM8K_CONFIG = dict(
+    CHAT_CONFIG,
+    task="gsm8k_chat",
+    chat_dataset="openai/gsm8k",
+    chat_dataset_config="main",
+    chat_dataset_revision="740312add88f781978c0658806c59bc2815b9866",
+    chat_split="test",
+    chat_expected_questions=1319,
+    chat_max_answer_tokens=32,
+    offline_evaluation=False,
+    round_activations_site="mlp",
+    round_activations_eps=0.0,
+    round_activations_quantile=0.0,
+)
+for key in ("chat_subjects", "chat_per_subject"):
+    del GSM8K_CONFIG[key]
+experiment_configs += [
+    dict(GSM8K_CONFIG, name=name)
+    for name in ("gsm8k_baseline", "gsm8k_baseline_repeat")
 ]
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
@@ -373,11 +396,13 @@ def wait_ready(alive=session_exists):
 
 def evaluate(limit, output=None):
     """Run the generative check (chat_eval.py) against the running server."""
-    if CONFIG["task"] != "mmlu_stem_chat":
+    if CONFIG["task"] not in ("mmlu_stem_chat", "gsm8k_chat"):
         raise RuntimeError("Only generative evaluation is supported (ADR 0004)")
     status()
     if output is None:
         output = ARTIFACTS / ("chat-smoke" if limit else "chat")
+        if CONFIG["task"] == "gsm8k_chat":
+            output = ARTIFACTS / ("gsm8k-smoke" if limit else "gsm8k")
         output /= time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
     actual = None
@@ -453,7 +478,8 @@ def job(name, limit):
         )
         try:
             wait_ready(lambda: server.poll() is None)
-            output = evaluate(limit, attempt / "mmlu")
+            task_dir = "gsm8k" if CONFIG["task"] == "gsm8k_chat" else "mmlu"
+            output = evaluate(limit, attempt / task_dir)
         finally:
             server.send_signal(signal.SIGINT)
             try:

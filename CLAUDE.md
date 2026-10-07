@@ -4,7 +4,7 @@
 
 All further evaluation must be generative: the model writes its answer through
 the chat template and the answer is parsed from the generated text
-(`experiments/qwen3_mmlu/chat_eval.py`, the generative check). Do not add or
+(`experiments/qwen3_mmlu/chat_eval.py`, MMLU and GSM8K). Do not add or
 revive likelihood-based evaluation (lm-evaluation-harness `loglikelihood` tasks,
 5-shot answer-letter or choice log-probability scoring). The harness path, its
 rows, and its artifacts were removed on 2026-09-30 (`docs/adr/0004`); 5-shot
@@ -15,6 +15,14 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `run.py eval --name gsm8k_baseline [--limit N]`: generative GSM8K evaluation
+  against the matching local server; `gsm8k.py` parses numeric answers.
+- `run_jobs.py --filter 'gsm8k_*' [--dry] [--limit N]`: GSM8K baseline/repeat
+  through the shared MLS launcher. Dataset and protocol settings are in
+  `run.py:experiment_configs`; GSM8K may fetch the pinned dataset into HF cache.
+- `chat_eval.py summarize --task gsm8k_chat [--filter GLOB]`: validate full
+  GSM8K jobs and write their own summary against `gsm8k_baseline`, separately
+  from the default MMLU summary. See `experiments/qwen3_mmlu/GSM8K.md`.
 - `experiments/qwen3_mmlu/compression.py {all,capture,screen,plot}`: checkpoint
   compression screening on routed corpus activations; no model accuracy eval.
   `all` captures separate calibration/held-out splits, screens selected expert
@@ -55,7 +63,7 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   `'chat_*'`).
 - `experiments/qwen3_mmlu/run.py eval --name chat_baseline [--limit N]`: evaluate
   one registry row against the running server (it must serve the same zeroing).
-  Every row and the default config run `chat_eval.py run`: chat template, 304
+  Every MMLU row and the default config run `chat_eval.py run`: chat template, 304
   seeded STEM questions, greedy reasoning capped at 1024 tokens, then a forced
   `[reasoning interrupted] Answer:` letter if needed.
 - `experiments/qwen3_mmlu/chat_eval.py summarize [--filter GLOB]`: validate
