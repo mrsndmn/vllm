@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import sys
 
+import benchmark_data
+import benchmark_eval
 import chat_eval
 import compression
 import gsm8k
@@ -34,6 +36,94 @@ from rounding_stats import (
 )
 
 import run
+
+
+@pytest.mark.parametrize(
+    "text,count,expected",
+    [
+        ("Reasoning\nAnswer: J", 10, "J"),
+        ("Answer: **I**", 10, "I"),
+        ("Answer: E", 4, None),
+        ("Answer: A or B", 4, None),
+        ("Answer: A\nAnswer: D", 4, "D"),
+    ],
+)
+def test_transfer_choice_parser_accepts_only_one_valid_final_option(
+    text, count, expected
+):
+    assert benchmark_eval.choice_answer(text, count) == expected
+
+
+def test_ifeval_preserves_instructions_without_answer_wrapper():
+    question = {"question": "Respond with exactly one word: yes."}
+    assert benchmark_eval.content(question, "ifeval") == question["question"]
+
+
+def test_math_transfer_grades_equivalent_answers_and_rejects_truncation():
+    pytest.importorskip("math_verify")
+    question = dict(
+        id="test",
+        answer=r"\frac{1}{2}",
+        response=r"The result is \boxed{0.5}",
+        finish_reason="stop",
+    )
+    assert benchmark_eval.grade(question, "math500")["correct"]
+    assert not benchmark_eval.grade(dict(question, finish_reason="length"), "math500")[
+        "correct"
+    ]
+    assert not benchmark_eval.grade(dict(question, response=r"\boxed{2}"), "math500")[
+        "correct"
+    ]
+
+
+def test_code_transfer_requires_base_and_extra_tests_to_pass():
+    pytest.importorskip("evalplus")
+    pytest.importorskip("tree_sitter_python")
+    config = dict(
+        benchmark={"dataset": "humaneval"},
+        code_min_time_limit=0.1,
+        code_time_limit_factor=4.0,
+    )
+    problem = dict(entry_point="identity", base_input=[[1]], plus_input=[[2]], atol=0)
+    oracle = dict(base=([1], [0.001]), plus=([2], [0.001]))
+    record = dict(response="def identity(x):\n    return x", finish_reason="stop")
+    assert benchmark_eval.code_grade(record, config, problem, oracle)["correct"]
+    broken = benchmark_eval.code_grade(
+        dict(record, response="def identity(x):\n    return 1"), config, problem, oracle
+    )
+    assert broken["base_passed"] and not broken["plus_passed"]
+    assert not broken["correct"]
+
+
+def test_prepared_benchmark_rejects_changed_inputs(tmp_path):
+    path = tmp_path / "questions.jsonl"
+    path.write_text('{"id":"1"}\n')
+    settings = {"expected_questions": 1}
+    (tmp_path / "manifest.json").write_text(
+        json.dumps(
+            dict(
+                benchmark=settings,
+                packages=run.BENCHMARK_PACKAGES,
+                files={"questions.jsonl": benchmark_data.digest(path)},
+            )
+        )
+    )
+    benchmark_data.validate(tmp_path, settings)
+    path.write_text('{"id":"2"}\n')
+    with pytest.raises(ValueError, match="checksum"):
+        benchmark_data.validate(tmp_path, settings)
+
+
+def test_code_oracle_roundtrip_preserves_tuple_set_and_arrays():
+    import numpy as np
+
+    original = {1: ({2, 3}, np.array([1.0, 2.0]), [complex(1, 2), 10**5000])}
+    decoded = benchmark_data.decode_value(
+        json.loads(json.dumps(benchmark_data.encode_value(original)))
+    )
+    assert isinstance(decoded[1], tuple) and decoded[1][0] == {2, 3}
+    assert np.array_equal(decoded[1][1], original[1][1])
+    assert decoded[1][2] == [complex(1, 2), 10**5000]
 
 
 def test_compression_reservoir_keeps_uniform_priorities_and_total_routed_count():
@@ -608,10 +698,21 @@ def test_registry_is_generative_only():
     names = [c["name"] for c in run.experiment_configs]
     assert len(names) == len(set(names)) == len(run_jobs.job_configs())
     for config in run.experiment_configs:
-        assert config["name"].startswith(("chat_", "prof_", "gsm8k_"))
+        assert config["name"].startswith(("chat_", "prof_", "gsm8k_", "suite_"))
         if config["task"] == gsm8k.TASK:
             assert "chat_subjects" not in config and "chat_per_subject" not in config
             assert config["chat_expected_questions"] == 1319
+        elif config["task"] in run.BENCHMARK_CONFIGS:
+            assert config["benchmark"] == run.BENCHMARK_CONFIGS[config["task"]]
+            original = next(
+                c
+                for c in run.experiment_configs
+                if c["name"]
+                == "gsm8k" + config["name"].removeprefix("suite_" + config["task"])
+            )
+            assert {k: v for k, v in config.items() if k.startswith("round_")} == {
+                k: v for k, v in original.items() if k.startswith("round_")
+            }
         else:
             assert {k: config[k] for k in run.CHAT_CONFIG} == run.CHAT_CONFIG
 
@@ -1729,6 +1830,30 @@ def test_gsm8k_local_eval_and_mls_payload_use_shared_launcher(
     assert payload["script"].endswith(f"run.py job --name {name} --limit 2")
 
 
+@pytest.mark.parametrize("task", list(run.BENCHMARK_CONFIGS))
+def test_transfer_local_eval_dispatches_to_offline_benchmark_grader(
+    tmp_path, monkeypatch, task
+):
+    name = "suite_" + task + "_baseline"
+    config = run_jobs.job_configs(name)[0]
+    calls = fake_eval_server(
+        tmp_path,
+        monkeypatch,
+        {
+            "site": config["round_activations_site"],
+            "epsilon": config["round_activations_eps"],
+            "quantile": config["round_activations_quantile"],
+            "quantiles": None,
+        },
+    )
+    run.select(name)
+    output = run.evaluate(2)
+    assert output.parent == tmp_path / (task + "-smoke")
+    assert any(str(arg).endswith("benchmark_eval.py") for arg in calls[0][0])
+    assert calls[0][1]["env"]["HF_DATASETS_OFFLINE"] == "1"
+    assert json.loads((output / "experiment.json").read_text()) == config
+
+
 def test_gsm8k_summary_keeps_baseline_separate_from_mmlu(tmp_path, monkeypatch):
     configs = [
         dict(c, chat_expected_questions=2)
@@ -1849,7 +1974,10 @@ def test_watcher_one_failed_job_triggers_while_others_are_running():
     )
 
 
-def test_watcher_resume_targets_original_session_and_topic(tmp_path, monkeypatch):
+@pytest.mark.parametrize("label", ["GSM8K", "transfer benchmark suite"])
+def test_watcher_resume_targets_original_session_and_topic(
+    tmp_path, monkeypatch, label
+):
     calls = []
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     config = {
@@ -1861,6 +1989,7 @@ def test_watcher_resume_targets_original_session_and_topic(tmp_path, monkeypatch
         "user_id": 1,
         "session_id": "original-session",
         "telegram_thread_id": 7,
+        "evaluation_label": label,
     }
     event_path = tmp_path / "event.json"
     watch_jobs.resume_conversation(
@@ -1872,6 +2001,7 @@ def test_watcher_resume_targets_original_session_and_topic(tmp_path, monkeypatch
     assert call["telegram_chat_id"] == "chat" and call["telegram_thread_id"] == 7
     assert call["message_id"] == 123 and call["user_id"] == 1
     assert str(event_path) in call["question"]
+    assert label + " results" in call["question"]
     assert call["telegram_token"] == "test-token"
 
 

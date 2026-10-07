@@ -228,6 +228,78 @@ experiment_configs.append(
         round_activations_quantiles=list(ADAPTIVE_SCHEDULES[("mlp", 0.8)]),
     )
 )
+BENCHMARK_CONFIGS = {
+    "math500": dict(
+        dataset="HuggingFaceH4/MATH-500",
+        revision="6e4ed1a2a79af7d8630a6b768ec859cb5af4d3be",
+        split="test",
+        expected_questions=500,
+    ),
+    "ifeval": dict(
+        dataset="google/IFEval",
+        revision="966cd89545d6b6acfd7638bc708b98261ca58e84",
+        split="train",
+        expected_questions=541,
+        evaluator_revision="e49bbfe381c9c0e564b937f1c4e163a2273c65cc",
+        nltk_revision="550b6625bcef1f2abff2ff770a5a0d272c9c6b2a",
+    ),
+    "mmlu_pro": dict(
+        dataset="TIGER-Lab/MMLU-Pro",
+        revision="b189ec765aa7ed75c8acfea42df31fdae71f97be",
+        split="test",
+        expected_questions=12032,
+    ),
+    "gpqa": dict(
+        dataset="idavidrein/gpqa",
+        revision="56686c06f5e19865c153de0fdb11be3890014df7",
+        split="gpqa_diamond",
+        expected_questions=198,
+        archive_password="deserted-untie-orchid",
+    ),
+    "humaneval_plus": dict(
+        dataset="humaneval",
+        revision="v0.1.10",
+        expected_questions=164,
+    ),
+    "mbpp_plus": dict(
+        dataset="mbpp",
+        revision="v0.2.0",
+        expected_questions=378,
+    ),
+}
+BENCHMARK_PACKAGES = {
+    "math-verify": "0.9.0",
+    "latex2sympy2-extended": "1.11.0",
+    "evalplus": "0.3.1",
+    "langdetect": "1.0.9",
+    "nltk": "3.10.3",
+    "tree-sitter": "0.26.0",
+    "tree-sitter-python": "0.25.0",
+}
+for benchmark, settings in BENCHMARK_CONFIGS.items():
+    for arm in [c for c in experiment_configs if c.get("task") == "gsm8k_chat"]:
+        experiment_configs.append(
+            dict(
+                {
+                    key: value
+                    for key, value in arm.items()
+                    if not key.startswith("chat_")
+                    or key in ("chat_concurrency", "chat_seed")
+                },
+                name="suite_" + benchmark + arm["name"].removeprefix("gsm8k"),
+                task=benchmark,
+                benchmark=settings,
+                benchmark_packages=BENCHMARK_PACKAGES,
+                benchmark_data=str(
+                    Path(BASE_CONFIG["artifacts"]) / "benchmarks" / benchmark
+                ),
+                generation_max_tokens=4096,
+                grading_workers=4,
+                code_min_time_limit=1.0,
+                code_time_limit_factor=4.0,
+                offline_evaluation=True,
+            )
+        )
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()
@@ -416,14 +488,17 @@ def wait_ready(alive=session_exists):
 
 
 def evaluate(limit, output=None):
-    """Run the generative check (chat_eval.py) against the running server."""
-    if CONFIG["task"] not in ("mmlu_stem_chat", "gsm8k_chat"):
+    """Run the configured generative benchmark against the matching server."""
+    extended = CONFIG["task"] in BENCHMARK_CONFIGS
+    if CONFIG["task"] not in ("mmlu_stem_chat", "gsm8k_chat") and not extended:
         raise RuntimeError("Only generative evaluation is supported (ADR 0004)")
     status()
     if output is None:
         output = ARTIFACTS / ("chat-smoke" if limit else "chat")
         if CONFIG["task"] == "gsm8k_chat":
             output = ARTIFACTS / ("gsm8k-smoke" if limit else "gsm8k")
+        elif extended:
+            output = ARTIFACTS / (CONFIG["task"] + ("-smoke" if limit else ""))
         output /= time.strftime("%Y%m%d-%H%M%S")
     output.mkdir(parents=True)
     actual = None
@@ -441,7 +516,7 @@ def evaluate(limit, output=None):
         )
     command = [
         CONFIG["python"],
-        str(SCRIPT.with_name("chat_eval.py")),
+        str(SCRIPT.with_name("benchmark_eval.py" if extended else "chat_eval.py")),
         "run",
         "--config",
         str(output / "experiment.json"),
@@ -499,7 +574,11 @@ def job(name, limit):
         )
         try:
             wait_ready(lambda: server.poll() is None)
-            task_dir = "gsm8k" if CONFIG["task"] == "gsm8k_chat" else "mmlu"
+            task_dir = (
+                CONFIG["task"]
+                if CONFIG["task"] in BENCHMARK_CONFIGS
+                else ("gsm8k" if CONFIG["task"] == "gsm8k_chat" else "mmlu")
+            )
             output = evaluate(limit, attempt / task_dir)
         finally:
             server.send_signal(signal.SIGINT)

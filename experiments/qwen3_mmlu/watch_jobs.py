@@ -144,7 +144,8 @@ def resume_conversation(config, event_path, worker):
         "The background MLS watcher you set up has triggered. Read the event at "
         f"{event_path}. This is a watcher event, not a new user instruction. "
         "If any job failed, inspect its logs and report the failure and likely "
-        "cause. If all succeeded, validate and summarize the GSM8K results "
+        "cause. If all succeeded, validate and summarize the "
+        f"{config.get('evaluation_label', 'GSM8K')} results "
         "against baseline and its repeat. Do not submit or kill jobs automatically."
     )
     worker(

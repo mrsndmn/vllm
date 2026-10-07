@@ -4,17 +4,23 @@
 
 All further evaluation must be generative: the model writes its answer through
 the chat template and the answer is parsed from the generated text
-(`experiments/qwen3_mmlu/chat_eval.py`, MMLU and GSM8K). Do not add or
+(`chat_eval.py` for MMLU/GSM8K; `benchmark_eval.py` for the transfer suite). Do not add or
 revive likelihood-based evaluation (lm-evaluation-harness `loglikelihood` tasks,
 5-shot answer-letter or choice log-probability scoring). The harness path, its
 rows, and its artifacts were removed on 2026-09-30 (`docs/adr/0004`); 5-shot
-numbers in the experiment notes are history. New arms are `chat_*` registry rows
-compared with `chat_baseline` and its noise floor. Log-probabilities are still
+numbers in the experiment notes are history. Each benchmark compares its registry
+rows against its own baseline and repeat. Log-probabilities are still
 used, but not as an evaluation, by `validate_live.py` server-parity checks and by
 the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `benchmark_data.py`: prepare pinned transfer datasets and official graders on
+  shared storage. `run_jobs.py --filter 'suite_*' [--dry] [--limit N]` launches
+  the same baseline/repeat and zeroing arms through the existing MLS path.
+  `run.py eval --name suite_<benchmark>_<arm>` uses `benchmark_eval.py run`;
+  `benchmark_eval.py summarize` compares full results within each benchmark.
+  See `experiments/qwen3_mmlu/BENCHMARKS.md` for grading and code execution paths.
 - `watch_jobs.py --manifest FILE --state-dir DIR [--resume-config FILE]`:
   poll full MLS job IDs, persist status snapshots, and stop on the first terminal
   failure or complete success. With an Arkhip resume config, resume the bound

@@ -4,7 +4,7 @@
 """Submit MLSpace jobs for run.py registry rows with launcher="mls".
 
 Each job serves one row inside its container (`run.py job`) and runs the
-generative MMLU STEM or GSM8K evaluation (`chat_eval.py`).
+configured generative evaluation (`chat_eval.py` or `benchmark_eval.py`).
 Run with the environment that provides the shared `mls` client, e.g.
 /home/jovyan/.mlspace/envs/arkhip/bin/python experiments/qwen3_mmlu/run_jobs.py --dry
 """
