@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3 · English embedding / unembedding</title>
+<style>
+body{margin:0;background:#101722;color:#e1e8f1;font:15px system-ui,sans-serif}main{max-width:1450px;margin:auto;padding:24px}h1{font-size:30px;margin-bottom:8px}h2{font-size:21px}p{line-height:1.6;color:#b7c5d8}section{background:#182230;border:1px solid #304056;border-radius:14px;padding:20px;margin:18px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.plot{height:370px;min-width:0}.wide{height:460px}.controls{display:flex;gap:18px;align-items:center;flex-wrap:wrap}select,input,button{background:#243349;color:white;border:1px solid #52647e;border-radius:6px;padding:8px}input{width:90px}table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}td,th{padding:9px;border-bottom:1px solid #34445b;text-align:right}td:first-child,th:first-child{text-align:left}code{color:#78d9c9;overflow-wrap:anywhere}.pill{display:inline-block;padding:7px 12px;border-radius:8px;background:#243349;margin:5px 5px 5px 0}a{color:#70cfff}#error{color:#ff8d8d}details{margin-top:20px}summary{cursor:pointer}pre{white-space:pre-wrap} @media(max-width:800px){main{padding:10px}.grid{grid-template-columns:1fr}section{padding:12px}h1{font-size:23px}.table-wrap{overflow:auto}}
+</style><script>%%PLOTLY%%</script></head>
+<body><main>
+<h1>Embedding ↔ Unembedding</h1><p id="subtitle"></p><div id="meta"></div><p id="error"></p>
+<section><h2>Что именно сравниваем</h2><p id="method"></p>
+<p>В checkpoint обе матрицы хранятся как <b>[vocabulary, hidden]</b>. Здесь одинаковые 1000 строк токенов × все 2048 каналов. В линейной алгебре выходная проекция — транспонированный lm_head: выбранные строки checkpoint соответствуют её столбцам. Каналы — координаты hidden space, а не токены. Анализируются веса, без inference.</p>
+<p>Словарный фильтр — приближение к «английскому»: включает редкие слова, имена и некоторые совпадения с другими языками; исключает части слов, пунктуацию и сокращения вне словаря. Токены со словами с пробелом и без него — разные ID и могут оба попасть в выборку. Выводы относятся к этой выборке.</p>
+<div class="table-wrap"><table id="stats"></table></div><p id="findings"></p></section>
+<section><h2>Распределение всех значений</h2><div class="controls"><label><input id="logy" type="checkbox" style="width:auto"> Логарифмическая Y</label></div>
+<p>Общие границы bins для двух матриц. Частота — доля всех элементов, не плотность; каждый элемент выбранных строк учитывается один раз. Нули не входят в log₁₀|w| и указаны отдельно в таблице.</p>
+<div class="grid"><div id="signed" class="plot"></div><div id="magnitude" class="plot"></div></div></section>
+<section><h2>Каждый hidden-канал</h2><div class="controls"><label>Метрика <select id="metric"><option value="rms">RMS</option><option value="std">Std</option><option value="mean">Mean</option><option value="abs_q0.99">99% quantile |w|</option><option value="excess_kurtosis">Excess kurtosis</option><option value="energy_share">Доля энергии</option><option value="negative_share">Доля отрицательных</option><option value="zero_share">Доля нулей</option></select></label><label>Канал <input id="channel" type="number" min="0" value="0"></label><button id="strongest">Канал с максимальным RMS</button></div>
+<p>Каждая точка — статистика по 1000 токенам одного канала. Нажми на точку, чтобы увидеть его гистограмму. RMS включает смещение, std измеряет разброс вокруг среднего. Энергия = сумма w² по токенам.</p>
+<div id="channelplot" class="plot wide"></div><div id="channeldetail" class="plot"></div><p id="channeltext"></p>
+<div class="grid"><div id="energy" class="plot"></div><div id="alignment" class="plot"></div></div>
+<p>В кривой энергии каналы каждой матрицы отсортированы независимо. Pearson и cosine справа сравнивают одинаковые координаты по одинаковым токенам; это не показатель качества модели.</p></section>
+<section><h2>Поканальная карта по токенам</h2><label>Матрица <select id="heatmatrix"><option value="embedding">Embedding</option><option value="unembedding">Unembedding</option></select></label>
+<p>Все выбранные токены. Для компактности соседние каналы объединены в группы по 32: цвет — RMS группы, а не отдельное значение веса. Порядок токенов случайный; hover показывает token ID и слово.</p><div id="heatmap" class="plot wide"></div></section>
+<section><h2>Отдельный токен</h2><div class="controls"><label>Токен <select id="token"></select></label><label>Поиск <input id="search" type="text" style="width:180px" placeholder="word or token ID"></label></div>
+<p id="tokentext"></p><div class="grid"><div id="tokenhist" class="plot"></div><div id="tokennorm" class="plot"></div></div>
+<p>Cosine сравнивает входной вектор слова и его выходной вектор; lm_head применяется к hidden state после финального RMSNorm, поэтому прямое сходство весов не определяет вероятность токена.</p></section>
+<details><summary>Provenance / воспроизводимость / все 1000 токенов</summary><pre id="provenance"></pre><div id="tokenlist"></div></details>
+</main><script id="data" type="application/json">%%DATA%%</script><script>
+'use strict';
+const D=JSON.parse(document.getElementById('data').textContent), $=id=>document.getElementById(id);
+const labels=['embedding','unembedding'], colors=['#66cafa','#ffa86b'], N=D.tokens.length, H=D.width;
+const fmt=x=>Number(x).toPrecision(5), pct=x=>(100*x).toFixed(3)+'%';
+const STYLE={paper_bgcolor:'#182230',plot_bgcolor:'#182230',font:{color:'#d1deec'},margin:{l:70,r:20,t:45,b:55},legend:{orientation:'h',y:1.15}};
+const CFG={responsive:true,displaylogo:false};
+function plot(id,traces,layout={}){return Plotly.react(id,traces,{...STYLE,...layout},CFG);}
+function centers(edges){return edges.slice(1).map((v,i)=>(v+edges[i])/2);}
+function bf16(encoded){const bytes=atob(encoded), out=new Float32Array(bytes.length/2), bits=new Uint32Array(out.buffer);for(let i=0;i<out.length;i++)bits[i]=(bytes.charCodeAt(i*2)|(bytes.charCodeAt(i*2+1)<<8))<<16;return out;}
+const M=Object.fromEntries(labels.map(k=>[k,bf16(D.bf16[k])]));
+function hist(values,edges){const counts=new Array(edges.length-1).fill(0),lo=edges[0],hi=edges.at(-1),step=(hi-lo)/counts.length;for(const v of values){if(v<lo||v>hi||!Number.isFinite(v))continue;counts[Math.min(counts.length-1,Math.floor((v-lo)/step))]++;}return counts.map(c=>c/values.length);}
+function traces(x,ys){return labels.map((k,i)=>({x,y:ys[i],type:'scatter',mode:'lines',name:k,line:{color:colors[i],width:1.6}}));}
+function globalPlots(){for(const [id,key,edges,title] of [['signed','signed',D.edges,'Значение веса'],['magnitude','log_abs',D.log_edges,'log₁₀ |w|']])plot(id,traces(centers(edges),labels.map(k=>D.histograms[k][key].map(c=>c/(N*H)))),{title,xaxis:{title},yaxis:{title:'Доля элементов / bin',type:$('logy').checked?'log':'linear'}});}
+function showChannels(){const metric=$('metric').value;plot('channelplot',traces(Array.from({length:H},(_,i)=>i),labels.map(k=>D.channels[k][metric])),{title:metric,xaxis:{title:'Hidden channel (0-based)'},yaxis:{title:metric}});}
+function showChannel(){const raw=Number($('channel').value);if(!Number.isInteger(raw)||raw<0||raw>=H)return;const c=raw,values=labels.map(k=>Array.from({length:N},(_,i)=>M[k][i*H+c]));let lo=Infinity,hi=-Infinity;for(const a of values)for(const v of a){lo=Math.min(lo,v);hi=Math.max(hi,v);}if(lo===hi){lo-=1e-5;hi+=1e-5;}const edges=Array.from({length:101},(_,i)=>lo+(hi-lo)*i/100);plot('channeldetail',traces(centers(edges),values.map(x=>hist(x,edges))),{title:'Channel '+c+' · 1000 weights / matrix',xaxis:{title:'Вес'},yaxis:{title:'Доля / bin'}});$('channeltext').textContent=labels.map(k=>`${k}: mean ${fmt(D.channels[k].mean[c])}, std ${fmt(D.channels[k].std[c])}, RMS ${fmt(D.channels[k].rms[c])}, kurtosis ${fmt(D.channels[k].excess_kurtosis[c])}`).join(' | ')+` | Pearson ${fmt(D.channel_pearson[c])}, cosine ${fmt(D.channel_cosines[c])}`;}
+function showHeat(){const k=$('heatmatrix').value,groups=D.config.heatmap_channel_groups;plot('heatmap',[{z:D.heatmaps[k],x:Array.from({length:groups},(_,i)=>i*(H/groups)),y:D.tokens.map((t,i)=>i),type:'heatmap',colorscale:'Viridis',customdata:D.tokens.map(t=>Array(groups).fill(`${t[0]}: ${JSON.stringify(t[1])}`)),hovertemplate:'%{customdata}<br>Группа каналов начинается с %{x}<br>RMS %{z:.5f}<extra></extra>',colorbar:{title:'RMS'}}],{title:k,xaxis:{title:'Начало группы каналов'},yaxis:{title:'Sample row',autorange:'reversed'},margin:{...STYLE.margin,r:85}});}
+function showToken(){const r=Number($('token').value);if(!Number.isInteger(r)||r<0||r>=N)return;const ys=labels.map(k=>Array.from(M[k].subarray(r*H,(r+1)*H)));plot('tokenhist',traces(centers(D.edges),ys.map(x=>hist(x,D.edges))),{title:'Токен '+JSON.stringify(D.tokens[r][1]),xaxis:{title:'Вес'},yaxis:{title:'Доля / bin'}});$('tokentext').textContent=`ID ${D.tokens[r][0]} · cosine ${fmt(D.token_cosines[r])} · `+labels.map(k=>`${k} L2 norm ${fmt(D.token_norms[k][r])}`).join(' · ');}
+async function init(){
+$('subtitle').textContent=D.model+' · checkpoint weights · offline interactive report';
+for(const text of [`${N} token IDs`,`${H} channels`,`${(N*H).toLocaleString()} weights / matrix`,`BF16 → exact FP32`,`seed ${D.config.seed}`]){const s=document.createElement('span');s.className='pill';s.textContent=text;$('meta').append(s);}
+$('method').textContent=`Равномерная выборка без повторения из ${D.pool_size.toLocaleString()} token IDs. Фильтр: минимум ${D.config.min_letters} ASCII-буквы, только слово с необязательным одним начальным пробелом; lowercase присутствует в закреплённом словаре RULER. Спецтокены исключены. Revision ${D.revision}.`;
+const columns=[['mean',fmt],['std',fmt],['min',fmt],['max',fmt],['abs_q0.99',fmt],['excess_kurtosis',fmt],['outside_3std_share',pct],['zero_share',pct]];
+$('stats').innerHTML='<tr><th>Матрица</th>'+columns.map(([k])=>`<th>${k}</th>`).join('')+'</tr>'+labels.map(k=>'<tr><td>'+k+'</td>'+columns.map(([key,f])=>'<td>'+f(D.summary.global[k][key])+'</td>').join('')+'</tr>';
+$('findings').textContent=labels.map(k=>`${k}: 10 самых энергичных каналов содержат ${pct(D.summary[k+'_energy'].top_10_share)} всей энергии; максимальный RMS / медианный RMS = ${fmt(D.summary[k+'_energy'].rms_max_to_median)}; доля энергии средних каналов = ${pct(D.summary[k+'_energy'].mean_energy_fraction)}.`).join(' ')+` Медианный cosine входного/выходного вектора токена = ${fmt(D.summary.token_cosine_quantiles[2])}. Kurtosis здесь excess: для нормального распределения 0; доля вне ±3 std у нормального распределения около 0.27%. Это описательные сравнения, не тест нормальности.`;
+$('channel').max=H-1;
+for(let i=0;i<N;i++){const o=document.createElement('option');o.value=i;o.textContent=`${D.tokens[i][0]} · ${JSON.stringify(D.tokens[i][1])}`;$('token').append(o);}
+globalPlots();showChannels();showChannel();showHeat();showToken();
+await plot('energy',traces(Array.from({length:H},(_,i)=>i+1),labels.map(k=>{let s=0;return [...D.channels[k].energy_share].sort((a,b)=>b-a).map(v=>s+=v);})),{title:'Накопленная энергия: каналы по убыванию',xaxis:{title:'Число каналов',type:'log'},yaxis:{title:'Доля энергии'}});
+await plot('alignment',[{x:Array.from({length:H},(_,i)=>i),y:D.channel_pearson,type:'scatter',mode:'lines',name:'Pearson',line:{color:colors[0]}},{x:Array.from({length:H},(_,i)=>i),y:D.channel_cosines,type:'scatter',mode:'lines',name:'Cosine',line:{color:colors[1]}}],{title:'Сходство E / U по каналам',xaxis:{title:'Hidden channel'},yaxis:{range:[-1,1]}});
+await plot('tokennorm',traces(D.token_norms.embedding,[D.token_norms.unembedding]).slice(0,1).map(t=>({...t,type:'scatter',mode:'markers',name:'token',marker:{color:D.token_cosines,colorscale:'RdBu',cmin:-1,cmax:1,size:5},text:D.tokens.map(t=>`${t[0]}: ${JSON.stringify(t[1])}`),hovertemplate:'%{text}<br>E norm %{x:.4f}<br>U norm %{y:.4f}<extra></extra>'})),{title:'Нормы токенов · цвет = cosine',xaxis:{title:'Embedding L2'},yaxis:{title:'Unembedding L2'}});
+$('provenance').textContent=JSON.stringify({model:D.model,revision:D.revision,shapes:D.shapes,source:D.source,config:D.config},null,2);
+$('tokenlist').textContent=D.tokens.map(t=>`${t[0]}:${JSON.stringify(t[1])}`).join(' · ');
+$('logy').onchange=globalPlots;$('metric').onchange=showChannels;$('channel').onchange=showChannel;$('heatmatrix').onchange=showHeat;$('token').onchange=showToken;
+$('channelplot').on('plotly_click',e=>{$('channel').value=e.points[0].x;showChannel();});
+$('strongest').onclick=()=>{const a=D.channels.embedding.rms;$('channel').value=a.indexOf(Math.max(...a));showChannel();};
+$('search').oninput=()=>{const q=$('search').value.toLowerCase();for(const o of $('token').options)o.hidden=!o.textContent.toLowerCase().includes(q);const o=[...$('token').options].find(o=>!o.hidden);if(o){$('token').value=o.value;showToken();}};
+document.body.dataset.ready='true';
+}
+init().catch(e=>{$('error').textContent=String(e);console.error(e);});
+</script></body></html>

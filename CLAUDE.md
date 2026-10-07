@@ -15,6 +15,12 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `experiments/qwen3_mmlu/embedding_viz.py`: CPU-only checkpoint analysis of
+  matched English-token embedding/lm_head rows; the registry configures a pinned
+  lexical filter and uniform sample. Writes offline interactive HTML, selected
+  weights, token/channel CSVs, summary and provenance outside the checkout.
+  The HTML embeds exact BF16 values for channel/token selection without a server.
+
 - `ruler.py`: adapter around pinned upstream RULER v1 synthetic generators,
   frozen chat inputs and answer prefixes, token-budget validation, partial-credit
   substring grading, and macro averaging by subtask. Source configuration lives
