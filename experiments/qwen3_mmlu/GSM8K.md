@@ -32,6 +32,15 @@ Aggregate completed full jobs separately from MMLU:
 python experiments/qwen3_mmlu/chat_eval.py summarize --task gsm8k_chat
 ```
 
+`watch_jobs.py` consumes the launch manifest, polls MLS, and writes `status.json`
+in its state directory. It triggers `event.json` on the first failed/stopped/
+terminated/deleted job or when every job completes successfully; API errors are
+recorded and retried. An optional Arkhip resume config binds the event to the
+original session and Telegram Topic. The bot token is passed only through the
+environment or a private FIFO. A per-directory lock prevents duplicate watchers,
+and a persisted event prevents duplicate resume calls. The watcher runs detached
+in tmux, independently of the interactive worker.
+
 The model receives the question through its chat template, never the gold
 solution. Numeric answers are compared exactly after normalizing thousands
 separators and decimal formatting. Ambiguous answers, expressions, and truncated
@@ -77,3 +86,4 @@ The adaptive schedule is reused without tuning on GSM8K.
 - 2026-10-07: Completed the local model smoke check and independent review.
 - 2026-10-07: Registered the selected MMLU zeroing variants for transfer to GSM8K.
 - 2026-10-07: Submitted all seven full GSM8K jobs and verified MLS running status.
+- 2026-10-07: Added a terminal-condition watcher with automatic conversation resume.

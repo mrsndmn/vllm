@@ -19,6 +19,7 @@ import pytest
 import run_jobs
 import sensitivity
 import torch
+import watch_jobs
 import weight_viz
 from rounding_api import RoundingMiddleware
 from rounding_stats import (
@@ -1758,3 +1759,117 @@ def test_gsm8k_summary_keeps_baseline_separate_from_mmlu(tmp_path, monkeypatch):
     assert rows["gsm8k_baseline_repeat"]["broken_vs_baseline"] == 1
     assert (tmp_path / "rounding-gsm8k-sweep-summary.csv").exists()
     assert not (tmp_path / "rounding-chat-sweep-summary.csv").exists()
+
+
+WATCH_JOBS = [
+    {"name": f"arm{i}", "job_name": f"lm-mpi-job-00000000-0000-0000-0000-{i:012d}"}
+    for i in range(2)
+]
+
+
+def test_watcher_rejects_incomplete_or_duplicate_job_ids(tmp_path):
+    manifest = tmp_path / "jobs.json"
+    manifest.write_text(json.dumps({"jobs": WATCH_JOBS}))
+    assert watch_jobs.load_jobs(manifest) == WATCH_JOBS
+    for jobs in (
+        [],
+        [WATCH_JOBS[0]] * 2,
+        [{"name": "arm", "job_name": "lm-mpi-job-00000000"}],
+    ):
+        manifest.write_text(json.dumps({"jobs": jobs}))
+        with pytest.raises(ValueError, match="complete MLS"):
+            watch_jobs.load_jobs(manifest)
+
+
+def test_watcher_api_errors_cannot_be_mistaken_for_completion_or_failure():
+    def query(job_id):
+        if job_id == WATCH_JOBS[0]["job_name"]:
+            raise TimeoutError("transient")
+        return {"status": "Completed"}
+
+    rows = watch_jobs.snapshot(WATCH_JOBS, query)
+    assert [r["status"] for r in rows] == ["unknown", "completed"]
+    assert rows[0]["query_error"] == "TimeoutError"
+    assert (
+        watch_jobs.terminal_event(rows, {"completed", "failed"}, {"completed"}) is None
+    )
+
+
+@pytest.mark.parametrize(
+    "end", ["completed", "failed", "stopped", "terminated", "deleted"]
+)
+def test_watcher_resumes_once_on_failure_or_all_success(tmp_path, monkeypatch, end):
+    phase = [0]
+    resumes = []
+
+    def query(job_id):
+        return {"status": "running" if phase[0] == 0 else end}
+
+    monkeypatch.setattr(
+        watch_jobs.time, "sleep", lambda interval: phase.__setitem__(0, 1)
+    )
+
+    def resume(path):
+        event = json.loads(path.read_text())
+        assert "resume_requested_at_utc" in event
+        resumes.append(event)
+
+    terminal = {"completed", "failed", "stopped", "terminated", "deleted"}
+    result = watch_jobs.watch(
+        WATCH_JOBS, query, terminal, {"completed"}, tmp_path, 1, resume=resume
+    )
+    assert len(resumes) == 1
+    assert result["condition"] == (
+        "all_succeeded" if end == "completed" else "job_failed"
+    )
+    assert (
+        json.loads((tmp_path / "status.json").read_text())["jobs"][0]["status"] == end
+    )
+    assert "resume_worker_returned_at_utc" in json.loads(
+        (tmp_path / "event.json").read_text()
+    )
+    with pytest.raises(RuntimeError, match="already triggered"):
+        watch_jobs.watch(
+            WATCH_JOBS, query, terminal, {"completed"}, tmp_path, 1, resume=resume
+        )
+    assert len(resumes) == 1
+
+
+def test_watcher_one_failed_job_triggers_while_others_are_running():
+    rows = [
+        dict(job, status=status)
+        for job, status in zip(WATCH_JOBS, ["failed", "running"])
+    ]
+    event = watch_jobs.terminal_event(rows, {"completed", "failed"}, {"completed"})
+    assert event["condition"] == "job_failed" and event["failed_jobs"] == rows[:1]
+    rows[0].update(status="completed", error_code=1)
+    assert (
+        watch_jobs.terminal_event(rows, {"completed"}, {"completed"})["condition"]
+        == "job_failed"
+    )
+
+
+def test_watcher_resume_targets_original_session_and_topic(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    config = {
+        "workdir": str(tmp_path),
+        "python_executable": "python",
+        "message_id": 123,
+        "telegram_chat_id": "chat",
+        "model": "sol",
+        "user_id": 1,
+        "session_id": "original-session",
+        "telegram_thread_id": 7,
+    }
+    event_path = tmp_path / "event.json"
+    watch_jobs.resume_conversation(
+        config, event_path, lambda **kwargs: calls.append(kwargs)
+    )
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["resume_session_id"] == config["session_id"]
+    assert call["telegram_chat_id"] == "chat" and call["telegram_thread_id"] == 7
+    assert call["message_id"] == 123 and call["user_id"] == 1
+    assert str(event_path) in call["question"]
+    assert call["telegram_token"] == "test-token"
