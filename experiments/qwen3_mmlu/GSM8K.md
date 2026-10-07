@@ -40,7 +40,15 @@ protocol, rather than a reproduction of another harness's few-shot score.
 
 ## Results
 
-Full benchmark results are pending.
+The local model smoke check answered all three sampled questions correctly;
+all answers were parsed naturally, with no forced continuation. This validates
+the integration, not full-test accuracy. The pinned dataset loaded successfully
+and every gold answer was parsed. All 107 regression tests and pre-commit checks
+passed; independent adversarial review returned APPROVE.
+
+Full benchmark results are pending. MLS payloads and dispatch were tested with
+the existing test fixtures; no jobs were submitted. A live launcher dry run
+could not proceed because the existing MLS client environment lacks `regex`.
 
 ## Conclusions
 
@@ -51,3 +59,4 @@ and repeat. Further zeroing arms can be added through the source registry.
 
 - 2026-10-07: Added GSM8K loading, numeric exact-match evaluation, registry rows,
   task-specific summaries, and regression checks.
+- 2026-10-07: Completed the local model smoke check and independent review.
