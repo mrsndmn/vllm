@@ -366,6 +366,25 @@ for benchmark, settings in BENCHMARK_CONFIGS.items():
                 offline_evaluation=True,
             )
         )
+# Weight zeroing arms inherit the exact baseline protocol for each benchmark.
+WEIGHT_BASELINES = [
+    row
+    for row in experiment_configs
+    if row.get("name", "").endswith("_baseline")
+    and not row["name"].startswith("prof_")
+    and row["task"] != "mmlu_pro"
+]
+experiment_configs += [
+    dict(
+        baseline,
+        name=baseline["name"].removesuffix("baseline")
+        + f"weight_{scope}_q{quantile:g}",
+        weight_zeroing=dict(scope=scope, quantile=quantile, batch_rows=256),
+    )
+    for baseline in WEIGHT_BASELINES
+    for scope in ("embedding", "both")
+    for quantile in (0.5, 0.7, 0.9)
+]
 for row in experiment_configs:
     if row["task"].startswith("ruler_"):
         row.update(
@@ -531,6 +550,8 @@ def rounding_args():
             "--round-activations-quantiles",
             ",".join(map(str, CONFIG["round_activations_quantiles"])),
         ]
+    if CONFIG.get("weight_zeroing"):
+        args += ["--weight-zeroing", json.dumps(CONFIG["weight_zeroing"])]
     return args
 
 
@@ -540,6 +561,7 @@ def config_mismatch(actual):
         or actual["site"] != CONFIG["round_activations_site"]
         or actual.get("quantile", 0.0) != CONFIG.get("round_activations_quantile", 0.0)
         or actual.get("quantiles") != CONFIG.get("round_activations_quantiles")
+        or actual.get("weight_zeroing") != CONFIG.get("weight_zeroing")
     )
 
 
@@ -678,6 +700,8 @@ def job(name, limit):
     } | ({"limit": limit} if limit else {})
     if smoke_output is not None:
         marker["smoke_output"] = str(smoke_output)
+    if CONFIG.get("weight_zeroing"):
+        marker["weight_zeroing"] = CONFIG["weight_zeroing"]
     (root / "done.json").write_text(json.dumps(marker, indent=2) + "\n")
     print(f"Job complete: {root / 'done.json'}", flush=True)
 

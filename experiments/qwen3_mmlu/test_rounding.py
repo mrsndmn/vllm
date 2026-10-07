@@ -848,6 +848,8 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
         "chat_mlp_q0.5",
         "chat_block_q0.5",
         "chat_moe_out_q0.5",
+        "chat_weight_embedding_q0.5",
+        "chat_weight_both_q0.5",
     ]
 
 
@@ -1006,6 +1008,7 @@ def test_chat_registry_rows():
         and c["name"].startswith("chat_")
         and not c["name"].startswith(("chat_adapt_", "chat_moe_out_"))
         and "_eps" not in c["name"]
+        and not c.get("weight_zeroing")
     ]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
@@ -2130,7 +2133,7 @@ def test_ruler_rejects_overflow_without_truncating_needle():
 
 def test_ruler_long_context_arms_preserve_zeroing_and_share_server_settings():
     rows = run_jobs.job_configs("suite_ruler_*")
-    assert len(rows) == 21
+    assert len(rows) == 39
     for row in rows:
         assert row["max_model_len"] == row["benchmark"]["context_length"]
         assert row["chat_concurrency"] == row["max_num_seqs"] == 2
@@ -2286,3 +2289,84 @@ def test_embedding_viewer_program_parses_and_decodes_exact_bf16():
         [node, "-e", script], text=True, capture_output=True, check=True
     )
     assert json.loads(output.stdout) == rows.float().tolist()
+
+
+def test_embedding_zeroing_uses_each_token_vector_and_stable_channel_ties():
+    """Different row scales share the fraction, not a matrix-wide cutoff."""
+    from embedding_zeroing import zero_rows
+
+    weights = torch.tensor(
+        [[4.0, -1.0, 1.0, -2.0], [40.0, -10.0, 10.0, -20.0]], dtype=torch.bfloat16
+    )
+    report = zero_rows(weights, 0.5, 1)
+    assert weights.tolist() == [[4.0, 0.0, 0.0, -2.0], [40.0, 0.0, 0.0, -20.0]]
+    assert report["zeros_after"] == 4
+    assert report["cutoff_min_median_max"] == [1.0, 5.5, 10.0]
+    ties = torch.tensor([[1.0, -1.0, 1.0, -1.0]], dtype=torch.bfloat16)
+    zero_rows(ties, 0.5, 2)
+    assert ties.tolist() == [[0.0, 0.0, 1.0, -1.0]]
+
+
+@pytest.mark.parametrize(
+    "scope,tied",
+    [("embedding", False), ("both", False), ("embedding", True), ("both", True)],
+)
+def test_embedding_zeroing_handles_scope_tying_and_vocab_padding(scope, tied):
+    """Real tied storage is mutated once and unrelated output/padding is preserved."""
+    from types import SimpleNamespace
+
+    from embedding_zeroing import apply
+
+    embedding = torch.tensor(
+        [[1.0, -2.0, 3.0, -4.0], [5.0, 6.0, 7.0, 8.0]], dtype=torch.bfloat16
+    )
+    output = embedding if tied else embedding.clone()
+    original = output.clone()
+    model = SimpleNamespace(
+        model=SimpleNamespace(embed_tokens=SimpleNamespace(weight=embedding)),
+        lm_head=SimpleNamespace(weight=output),
+        config=SimpleNamespace(vocab_size=1, hidden_size=4, tie_word_embeddings=tied),
+    )
+    report = apply(model, dict(scope=scope, quantile=0.5, batch_rows=1))
+    assert embedding.tolist() == [[0.0, 0.0, 3.0, -4.0], [5.0, 6.0, 7.0, 8.0]]
+    assert report["tied"] is tied
+    assert report["matrices"]["embedding"]["newly_zeroed"] == 2
+    if scope == "both" or tied:
+        assert output.tolist() == embedding.tolist()
+    else:
+        assert torch.equal(output, original)
+    if tied:
+        assert report["matrices"]["unembedding"] == {"shared_with": "embedding"}
+
+
+def test_embedding_weight_registry_covers_every_baseline_except_mmlu_pro(monkeypatch):
+    """All six weight arms inherit benchmark protocols without activation zeroing."""
+    rows = [c for c in run.experiment_configs if c.get("weight_zeroing")]
+    assert len(rows) == 60
+    assert len({c["name"] for c in rows}) == 60
+    assert {c["task"] for c in rows} == {
+        "mmlu_stem_chat",
+        "gsm8k_chat",
+        *set(run.BENCHMARK_CONFIGS) - {"mmlu_pro"},
+    }
+    for row in rows:
+        assert row["round_activations_quantile"] == 0
+        assert row["round_activations_eps"] == 0
+        assert not row.get("round_activations_quantiles")
+        assert row["weight_zeroing"]["quantile"] in (0.5, 0.7, 0.9)
+        baseline_name = row["name"].split("weight_", 1)[0] + "baseline"
+        baseline = next(
+            c for c in run.experiment_configs if c.get("name") == baseline_name
+        )
+        assert {
+            k: v for k, v in row.items() if k not in ("name", "weight_zeroing")
+        } == {k: v for k, v in baseline.items() if k != "name"}
+    monkeypatch.setattr(run, "CONFIG", dict(rows[0]))
+    cmd = run.server_command(embedding_viz.Path("/tmp/example.sqlite"))
+    assert (
+        json.loads(cmd[cmd.index("--weight-zeroing") + 1]) == rows[0]["weight_zeroing"]
+    )
+    actual = dict(site="mlp", epsilon=0, quantile=0)
+    assert run.config_mismatch(actual)
+    actual["weight_zeroing"] = rows[0]["weight_zeroing"]
+    assert not run.config_mismatch(actual)

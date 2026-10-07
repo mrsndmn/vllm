@@ -15,6 +15,15 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `run_jobs.py --filter '*weight_*' [--limit N] [--dry]`: per-token input/output
+  weight-zeroing eval arms across baselines except MMLU-Pro. The registry lives
+  in `run.py`; `rounding_server.py` passes its weight config to the worker.
+  `embedding_zeroing.py` modifies loaded BF16 weights before warmup, with stable
+  channel-order ties and storage deduplication for tied weights. Vocabulary
+  padding is excluded. Each attempt saves the requested config and actual
+  zeros, energy retention, cutoffs and tying in `rounding-config.json` and the
+  worker's `rounding.weights.json`; summaries label scope and quantile.
+
 - `experiments/qwen3_mmlu/embedding_viz.py`: CPU-only checkpoint analysis of
   matched English-token embedding/lm_head rows; the registry configures a pinned
   lexical filter and uniform sample. Writes offline interactive HTML, selected

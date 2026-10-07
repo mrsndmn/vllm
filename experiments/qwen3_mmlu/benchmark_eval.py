@@ -329,6 +329,9 @@ def summarize():
         repeat = runs.get("suite_" + task + "_baseline_repeat")
         for name, (result, records) in runs.items():
             row = dict(experiment=name, **result)
+            if config.get("weight_zeroing"):
+                row["weight_scope"] = config["weight_zeroing"]["scope"]
+                row["weight_quantile"] = config["weight_zeroing"]["quantile"]
             shares = chat_eval.layer_zero_shares(
                 Path(
                     json.loads((run.job_root(name, None) / "done.json").read_text())[

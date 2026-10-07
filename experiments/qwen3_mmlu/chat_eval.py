@@ -375,6 +375,9 @@ def summarize(pattern="*", baseline=None, task=TASK):
         }
         if config.get("round_activations_quantiles"):
             row["quantiles"] = ",".join(map(str, config["round_activations_quantiles"]))
+        if config.get("weight_zeroing"):
+            row["weight_scope"] = config["weight_zeroing"]["scope"]
+            row["weight_quantile"] = config["weight_zeroing"]["quantile"]
         if "reference" in result:
             row["reference_nll_per_token"] = result["reference"]["nll_per_token"]
         if reference and name != baseline:

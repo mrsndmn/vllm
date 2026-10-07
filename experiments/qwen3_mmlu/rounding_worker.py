@@ -1,11 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Version-pinned vLLM worker instrumentation; no installed files are modified."""
 
 import functools
 import json
 import os
-import re
+from pathlib import Path
 
 import numpy as np
+import regex as re
 import torch
 from rounding_stats import (
     FIELDS,
@@ -55,6 +59,16 @@ class RoundingWorker(Worker):
         if self.site not in SITES:
             raise ValueError(f"Unknown rounding site {self.site!r}")
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
+        weight_config = os.environ.get("EMBEDDING_WEIGHT_ZEROING")
+        if weight_config:
+            from embedding_zeroing import apply
+
+            report = apply(model, json.loads(weight_config))
+            report_path = Path(os.environ["ROUND_ACTIVATIONS_DB"]).with_suffix(
+                ".weights.json"
+            )
+            report_path.write_text(json.dumps(report, indent=2) + "\n")
+            print("Embedding weight zeroing: " + json.dumps(report), flush=True)
         self.active_counts = {}
         self.batch_ids = []
         self.batch_sizes = []

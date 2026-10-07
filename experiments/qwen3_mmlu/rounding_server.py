@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Launch the installed vLLM server with experimental activation thresholding."""
 
 import argparse
@@ -8,6 +11,7 @@ import runpy
 import sys
 from pathlib import Path
 
+from embedding_zeroing import validate_config
 from rounding_stats import (
     SITES,
     connect,
@@ -39,6 +43,9 @@ def main():
     )
     parser.add_argument("--round-activations-site", choices=SITES, required=True)
     parser.add_argument("--rounding-db", type=Path, required=True)
+    parser.add_argument(
+        "--weight-zeroing", type=lambda text: validate_config(json.loads(text))
+    )
     args, server_args = parser.parse_known_args()
     modes = (
         args.round_activations_eps,
@@ -62,6 +69,9 @@ def main():
             else "",
             "ROUND_ACTIVATIONS_SITE": args.round_activations_site,
             "ROUND_ACTIVATIONS_DB": str(args.rounding_db.resolve()),
+            "EMBEDDING_WEIGHT_ZEROING": json.dumps(args.weight_zeroing)
+            if args.weight_zeroing
+            else "",
             "VLLM_ENABLE_FUSED_MOE_ACTIVATION_CHUNKING": "0",
             "VLLM_USE_V2_MODEL_RUNNER": "0",
         }

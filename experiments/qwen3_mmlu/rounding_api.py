@@ -1,9 +1,13 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """ASGI extension exposing rounding counters on completed local API requests."""
 
 import asyncio
 import json
 import os
 import uuid
+from pathlib import Path
 
 from rounding_stats import read_stats
 
@@ -17,6 +21,8 @@ class RoundingMiddleware:
         self.quantile = float(os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0"))
         schedule = os.environ.get("ROUND_ACTIVATIONS_QUANTILES")
         self.quantiles = json.loads(schedule) if schedule else None
+        weights = os.environ.get("EMBEDDING_WEIGHT_ZEROING")
+        self.weight_zeroing = json.loads(weights) if weights else None
 
     async def stats(self, response_id=None):
         return await asyncio.to_thread(
@@ -44,6 +50,11 @@ class RoundingMiddleware:
                     "quantiles": self.quantiles,
                     "database": self.path,
                 }
+                if self.weight_zeroing:
+                    result["weight_zeroing"] = self.weight_zeroing
+                    result["weight_zeroing_report"] = json.loads(
+                        Path(self.path).with_suffix(".weights.json").read_text()
+                    )
             body = json.dumps(result).encode()
             await send(
                 {
