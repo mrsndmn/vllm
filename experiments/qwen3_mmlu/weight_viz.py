@@ -53,6 +53,17 @@ experiment_configs.append(
     )
 )
 TEMPLATE = Path(__file__).with_suffix(".html")
+experiment_configs.append(
+    dict(
+        CONFIG,
+        name="pythia160m_weights",
+        model="EleutherAI/pythia-160m",
+        snapshot="/home/jovyan/.cache/huggingface/hub/"
+        "models--EleutherAI--pythia-160m/snapshots/"
+        "50f5173d932e8e61f858120bcb800b97af589f46",
+        output=str(run.ARTIFACTS / "weight-viz" / "pythia-160m"),
+    )
+)
 STATS = (
     "min",
     "max",
@@ -77,14 +88,17 @@ STATS = (
 
 def identity(name):
     """Checkpoint tensor's (layer, expert, family), with -1 for global/non-expert."""
-    match = re.fullmatch(r"model\.layers\.(\d+)\.(.+)\.weight", name)
+    match = re.fullmatch(
+        r"(?:model|gpt_neox)\.layers\.(\d+)\.(.+)\.(weight|bias)", name
+    )
     if match:
         layer, tail = int(match[1]), match[2]
         expert = re.fullmatch(r"mlp\.experts\.(\d+)\.(\w+)", tail)
         if expert:
             return layer, int(expert[1]), "expert." + expert[2]
-        return layer, -1, tail
-    return -1, -1, name.removeprefix("model.").removesuffix(".weight")
+        return layer, -1, tail + (".bias" if match[3] == "bias" else "")
+    family = name.removeprefix("model.").removeprefix("gpt_neox.")
+    return -1, -1, family.removesuffix(".weight")
 
 
 def generator(device, seed):

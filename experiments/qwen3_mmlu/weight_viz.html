@@ -189,7 +189,7 @@ async function draw() {
     }
     $('hist-note').textContent=selected.length>1?'Pooled counts over all experts; scalar cards above are means per matrix.':'All values of the selected tensor. Tail bins included.';
     jobs.push(distribution('histogram',traces(selected,'Selected',$('axis').value)));
-    const compared=family==='embed_tokens'||family==='lm_head'||family==='norm'?[-1]:comparison;
+    const compared=DATA.records.find(r=>r[3]===family)?.[1]===-1?[-1]:comparison;
     const data=compared.flatMap(l=>traces(idsAt(l,family,expert),l<0?'Global':`Layer ${l}`,$('axis').value));
     $('compare-note').textContent='Distributions normalize each layer independently. Double-click legend entries to isolate a curve.';
     jobs.push(distribution('comparison',data));
@@ -209,7 +209,7 @@ async function boot() {
     families.forEach(f=>$('family').append(option(f,f)));
     document.title=`${DATA.config.model} — checkpoint weights`;
     document.querySelector('h1').textContent=document.title;
-    $('family').value=['expert.down_proj','mlp.down_proj'].find(f=>families.includes(f))||families[0];
+    $('family').value=['expert.down_proj','mlp.down_proj','mlp.dense_4h_to_h'].find(f=>families.includes(f))||families[0];
     if(!expertCount) {
       $('expert').parentElement.hidden=true;
       $('experts').parentElement.hidden=true;

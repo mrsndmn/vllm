@@ -316,17 +316,24 @@ def test_weight_single_file_checkpoint_covers_dense_layers_and_global_weights(tm
     from safetensors.torch import save_file
 
     weights = {
-        "model.layers.0.mlp.down_proj.weight": torch.eye(2),
-        "model.embed_tokens.weight": torch.ones(3, 2),
-        "model.norm.weight": torch.ones(2),
+        "gpt_neox.layers.0.mlp.dense_4h_to_h.weight": torch.eye(2),
+        "gpt_neox.layers.0.mlp.dense_4h_to_h.bias": torch.zeros(2),
+        "gpt_neox.embed_in.weight": torch.ones(3, 2),
+        "gpt_neox.final_layer_norm.weight": torch.ones(2),
     }
     save_file(weights, tmp_path / "model.safetensors")
     config = dict(weight_viz.CONFIG, snapshot=str(tmp_path))
     records, stats, linear, log, analysis = weight_viz.collect(config, "cpu", tmp_path)
     assert {r[0] for r in records} == set(weights)
     assert all(r[2] == -1 for r in records)
-    assert sum(math.prod(r[4]) for r in records) == 12
-    assert linear.sum() == log.sum() == 12
+    assert {tuple(r[1:4]) for r in records} == {
+        (0, -1, "mlp.dense_4h_to_h"),
+        (0, -1, "mlp.dense_4h_to_h.bias"),
+        (-1, -1, "embed_in"),
+        (-1, -1, "final_layer_norm"),
+    }
+    assert sum(math.prod(r[4]) for r in records) == 14
+    assert linear.sum() == log.sum() == 14
     assert list(analysis) == ["model.safetensors"]
 
 
