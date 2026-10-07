@@ -47,12 +47,20 @@ arms against its baseline and repeat. Artifacts remain outside the checkout.
 
 All prepared input counts and checksums passed validation. Every mathematical
 gold answer parses, every instruction configuration grades, and all prompts fit
-the server context window. The first five benchmark families passed MLS model
-smoke checks. Full evaluations and the MBPP+ model smoke check are pending.
+the server context window. All six benchmark families passed MLS model smoke
+checks, with complete artifacts and no truncated responses.
 
-The regression suite and pre-commit checks passed. Independent review identified
+All 142 regression tests and pre-commit checks passed. Independent review identified
 an upstream EvalPlus polynomial-root counter bug; the corrected upstream grader
 is now pinned and a regression checks acceptance of an alternative valid root.
+Fresh independent review returned APPROVE and validated the affected canonical
+solution and representative MBPP special-oracle cases.
+
+All 42 full MLS evaluations were submitted from commit `4fb9f0c8a6`. The launch
+manifest, full job identifiers, submission logs, smoke results, and watcher state
+are under the configured artifacts root at `launches/suite-4fb9f0c8a6/`.
+The durable watcher resumes the original conversation on failure or complete
+success; full accuracy results remain pending.
 
 ## Conclusions
 
@@ -62,3 +70,5 @@ adaptive schedule is held fixed, without tuning on these evaluation datasets.
 ## Changelog
 
 - 2026-10-07: Added the six datasets and existing seven arms to the MLS registry.
+- 2026-10-07: Passed all model smoke checks and independent review; submitted the
+  full transfer sweep and started its completion watcher.
