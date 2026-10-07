@@ -2370,3 +2370,63 @@ def test_embedding_weight_registry_covers_every_baseline_except_mmlu_pro(monkeyp
     assert run.config_mismatch(actual)
     actual["weight_zeroing"] = rows[0]["weight_zeroing"]
     assert not run.config_mismatch(actual)
+
+
+def test_transfer_summary_labels_each_weight_arm_and_preserves_baseline(
+    tmp_path, monkeypatch
+):
+    """Mixed completed runs must retain their own weight scope and fraction."""
+    task = "math500"
+    names = [
+        "suite_math500_baseline",
+        "suite_math500_weight_embedding_q0.5",
+        "suite_math500_weight_both_q0.9",
+    ]
+    data = tmp_path / "data"
+    data.mkdir()
+    question = dict(id="q0", answer="42")
+    (data / "questions.jsonl").write_text(json.dumps(question) + "\n")
+    configs = [
+        dict(
+            c,
+            benchmark=dict(c["benchmark"], expected_questions=1),
+            benchmark_data=str(data),
+        )
+        for c in run.experiment_configs
+        if c.get("name") in names
+    ]
+    monkeypatch.setattr(run, "experiment_configs", configs)
+    monkeypatch.setattr(run, "BENCHMARK_CONFIGS", {task: {}})
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(benchmark_data, "validate", lambda root, settings: {})
+    monkeypatch.setattr(chat_eval, "layer_zero_shares", lambda output: [0.0])
+    for config in configs:
+        root = run.job_root(config["name"], None)
+        output = root / "attempt"
+        output.mkdir(parents=True)
+        record = dict(
+            question,
+            prompt="same prompt",
+            prediction="42",
+            correct=True,
+            finish_reason="stop",
+            completion_tokens=1,
+        )
+        (root / "done.json").write_text(json.dumps(dict(output=str(output))))
+        (output / "experiment.json").write_text(json.dumps(config))
+        (output / "data-manifest.json").write_text("{}")
+        (output / "samples.jsonl").write_text(json.dumps(record) + "\n")
+        (output / "results.json").write_text(
+            json.dumps(benchmark_eval.metrics([record], task))
+        )
+    benchmark_eval.summarize()
+    rows = {
+        r["experiment"]: r
+        for r in json.loads((tmp_path / "benchmarks-summary.json").read_text())
+    }
+    assert "weight_scope" not in rows[names[0]]
+    assert rows[names[1]]["weight_scope"] == "embedding"
+    assert rows[names[1]]["weight_quantile"] == 0.5
+    assert rows[names[2]]["weight_scope"] == "both"
+    assert rows[names[2]]["weight_quantile"] == 0.9
+    assert all(r["delta_baseline_pp"] == 0 for r in rows.values())

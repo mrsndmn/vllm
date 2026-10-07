@@ -324,10 +324,10 @@ def summarize():
             )
             result = metrics(records, task)
             assert result == json.loads((output / "results.json").read_text())
-            runs[config["name"]] = (result, keyed)
+            runs[config["name"]] = (result, keyed, config)
         baseline = runs.get("suite_" + task + "_baseline")
         repeat = runs.get("suite_" + task + "_baseline_repeat")
-        for name, (result, records) in runs.items():
+        for name, (result, records, config) in runs.items():
             row = dict(experiment=name, **result)
             if config.get("weight_zeroing"):
                 row["weight_scope"] = config["weight_zeroing"]["scope"]
@@ -346,7 +346,7 @@ def summarize():
             for label, reference in (("baseline", baseline), ("repeat", repeat)):
                 if reference is None:
                     continue
-                reference_result, reference_records = reference
+                reference_result, reference_records, _ = reference
                 assert records.keys() == reference_records.keys()
                 assert all(
                     records[k]["prompt"] == reference_records[k]["prompt"]
