@@ -20,7 +20,8 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
   substring grading, and macro averaging by subtask. Source configuration lives
   in `run.py`; `benchmark_data.py` prepares inputs for the same transfer engine.
   `run_jobs.py --filter 'suite_ruler_*' [--limit N] [--dry]` launches long-context
-  rows. Round-robin inputs make the first smoke batch cover all subtasks.
+  rows. Round-robin inputs make the first smoke batch cover all subtasks. Full
+  RULER jobs run this preflight before the full pass on the same allocated GPU.
   `benchmark_eval.py summarize` validates and compares each length to its own
   baseline and repeat. See `experiments/qwen3_mmlu/RULER.md`.
 

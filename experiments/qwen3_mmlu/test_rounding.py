@@ -2139,3 +2139,97 @@ def test_ruler_long_context_arms_preserve_zeroing_and_share_server_settings():
         assert {k: v for k, v in row.items() if k.startswith("round_")} == {
             k: v for k, v in reference.items() if k.startswith("round_")
         }
+
+
+@pytest.mark.parametrize("fail_preflight", [False, True])
+def test_ruler_job_requires_preflight_before_full_completion(
+    tmp_path, monkeypatch, fail_preflight
+):
+    name = "suite_ruler_32k_baseline"
+    calls, servers = [], []
+
+    def popen(command, **kwargs):
+        server = FakeServer(command, **kwargs)
+        servers.append(server)
+        return server
+
+    def evaluate(limit, output):
+        calls.append((limit, output))
+        assert not (run.job_root(name, None) / "done.json").exists()
+        if fail_preflight:
+            raise RuntimeError("preflight failed")
+        return output
+
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(run, "CONFIG", dict(run.CONFIG))
+    monkeypatch.setattr(run.subprocess, "Popen", popen)
+    monkeypatch.setattr(run, "wait_ready", lambda alive: alive())
+    monkeypatch.setattr(run, "evaluate", evaluate)
+    if fail_preflight:
+        with pytest.raises(RuntimeError, match="preflight failed"):
+            run.job(name, None)
+        assert [limit for limit, _ in calls] == [13]
+        assert not (run.job_root(name, None) / "done.json").exists()
+    else:
+        run.job(name, None)
+        assert [limit for limit, _ in calls] == [13, None]
+        marker = json.loads((run.job_root(name, None) / "done.json").read_text())
+        assert marker["smoke_output"] == str(calls[0][1])
+        assert marker["output"] == str(calls[1][1])
+        assert calls[0][1] != calls[1][1]
+    assert servers[0].signals == [run.signal.SIGINT]
+
+
+def test_ruler_source_hydrates_lfs_and_reuses_cache_after_python_import(
+    tmp_path, monkeypatch
+):
+    import hashlib
+    import io
+    import tarfile
+
+    import ruler
+
+    words = b'{"0":"apple"}'
+    essay = b'{"text":"example"}'
+    buffer = io.BytesIO()
+    files = {
+        "scripts/data/synthetic/json/english_words.json": b"version https://git-lfs.github.com/spec/v1\n",
+        "scripts/data/synthetic/json/PaulGrahamEssays.json": essay,
+        "scripts/data/synthetic/__pycache__/constants.pyc": b"old cache",
+    }
+    with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name, value in files.items():
+            member = tarfile.TarInfo("RULER-test/" + name)
+            member.size = len(value)
+            archive.addfile(member, io.BytesIO(value))
+    raw = buffer.getvalue()
+    settings = dict(
+        revision="test",
+        source_sha256=hashlib.sha256(raw).hexdigest(),
+        corpus_urls={"english_words.json": "https://example.test/lfs"},
+    )
+    calls = []
+
+    def download(url):
+        calls.append(url)
+        return words if url.endswith("/lfs") else raw
+
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(
+        run,
+        "RULER_CORPUS_SHA256",
+        {
+            "english_words.json": hashlib.sha256(words).hexdigest(),
+            "PaulGrahamEssays.json": hashlib.sha256(essay).hexdigest(),
+        },
+    )
+    monkeypatch.setattr(benchmark_data, "download", download)
+    root, provenance = ruler.source(settings)
+    assert json.loads(
+        (root / "scripts/data/synthetic/json/english_words.json").read_text()
+    ) == {"0": "apple"}
+    (root / "scripts/data/synthetic/__pycache__/constants.pyc").write_bytes(
+        b"new cache"
+    )
+    assert ruler.source(settings) == (root, provenance)
+    assert len(calls) == 2

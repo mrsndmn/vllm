@@ -292,12 +292,18 @@ RULER_CONFIG = dict(
         "qa_2",
     ],
     corpus_urls={
+        "english_words.json": "https://media.githubusercontent.com/media/NVIDIA/RULER/"
+        "c3f5e3b4f87f97e048793bb510a3a6b19a46bf3a/"
+        "scripts/data/synthetic/json/english_words.json",
         "squad.json": "https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json",
         "hotpotqa.json": "https://huggingface.co/datasets/namlh2004/hotpotqa/resolve/"
         "7e54db4656209750ff487f6fdf8e39a66dba136b/hotpot_dev_distractor_v1.json",
     },
 )
 RULER_CORPUS_SHA256 = {
+    "english_words.json": (
+        "affcd6d45fdf3cc843d585c99c97ad615094e760e6c4756b654bab6c73bc2eca"
+    ),
     "squad.json": "80a5225e94905956a6446d296ca1093975c4d3b3260f1d6c8f68bc2ab77182d8",
     "hotpotqa.json": "e3da074df24e8369009918aa5cdbdd254dadcde4c63f7569d36afd6f2268caa8",
     "PaulGrahamEssays.json": (
@@ -633,6 +639,7 @@ def job(name, limit):
     env = environment()
     if CONFIG["offline_evaluation"]:
         env.update({"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"})
+    smoke_output = None
     with (attempt / "server.log").open("w") as log:
         server = subprocess.Popen(
             server_command(attempt / "rounding.sqlite"),
@@ -648,6 +655,10 @@ def job(name, limit):
                 if CONFIG["task"] in BENCHMARK_CONFIGS
                 else ("gsm8k" if CONFIG["task"] == "gsm8k_chat" else "mmlu")
             )
+            if CONFIG["task"].startswith("ruler_") and limit is None:
+                smoke_output = evaluate(
+                    len(CONFIG["benchmark"]["subtasks"]), attempt / "ruler-smoke"
+                )
             output = evaluate(limit, attempt / task_dir)
         finally:
             server.send_signal(signal.SIGINT)
@@ -665,6 +676,8 @@ def job(name, limit):
         "quantiles": CONFIG.get("round_activations_quantiles"),
         "output": str(output),
     } | ({"limit": limit} if limit else {})
+    if smoke_output is not None:
+        marker["smoke_output"] = str(smoke_output)
     (root / "done.json").write_text(json.dumps(marker, indent=2) + "\n")
     print(f"Job complete: {root / 'done.json'}", flush=True)
 

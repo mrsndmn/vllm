@@ -18,7 +18,9 @@ lengths, samples, seeds, package versions, and server parameters live in code.
 Use the configured evaluation environment for preparation and the existing MLS
 client environment for `run_jobs.py --filter 'suite_ruler_*'`. `--dry` previews
 payloads; `--limit N` produces separate smoke artifacts. Inputs alternate between
-subtasks so a smoke batch can cover every task.
+subtasks so a smoke batch can cover every task. Every full RULER MLS job first
+evaluates one round-robin batch on its allocated server, writing separate smoke
+artifacts. A failed preflight prevents the full pass and its completion marker.
 
 `benchmark_eval.py:run_eval` generates continuations and saves individual task
 scores. Grading follows RULER v1: case-insensitive substring recall for retrieval

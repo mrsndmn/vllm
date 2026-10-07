@@ -54,7 +54,9 @@ def source(settings):
     corpus = root / "scripts/data/synthetic/json"
     for name, url in settings["corpus_urls"].items():
         target = corpus / name
-        if not target.exists():
+        if not target.exists() or target.read_bytes().startswith(
+            b"version https://git-lfs.github.com/spec/v1"
+        ):
             target.write_bytes(benchmark_data.download(url))
     essay = corpus / "PaulGrahamEssays.json"
     failures = []
@@ -102,7 +104,7 @@ def source(settings):
         files={
             str(p.relative_to(root)): benchmark_data.digest(p)
             for p in root.rglob("*")
-            if p.is_file()
+            if p.is_file() and "__pycache__" not in p.parts
         },
     )
     marker.write_text(json.dumps(provenance, indent=2) + "\n")
