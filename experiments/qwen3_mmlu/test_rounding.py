@@ -1873,3 +1873,50 @@ def test_watcher_resume_targets_original_session_and_topic(tmp_path, monkeypatch
     assert call["message_id"] == 123 and call["user_id"] == 1
     assert str(event_path) in call["question"]
     assert call["telegram_token"] == "test-token"
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_watcher_retains_and_retries_failed_resume_delivery(
+    tmp_path, monkeypatch, restart
+):
+    attempts = []
+    monkeypatch.setattr(watch_jobs.time, "sleep", lambda interval: None)
+
+    def resume(path):
+        event = json.loads(path.read_text())
+        attempts.append(event)
+        if len(attempts) == 1:
+            raise ConnectionError("temporary delivery failure")
+
+    def query(job_id):
+        return {"status": "failed"}
+
+    if restart:
+        with pytest.raises(ConnectionError):
+            watch_jobs.watch(
+                WATCH_JOBS,
+                query,
+                {"failed"},
+                {"completed"},
+                tmp_path,
+                1,
+                resume=resume,
+                once=True,
+            )
+        pending = json.loads((tmp_path / "event.json").read_text())
+        assert pending["resume_error"] == "ConnectionError"
+        assert "resume_worker_returned_at_utc" not in pending
+
+        def query(job_id):
+            raise AssertionError(
+                "Restart should deliver the saved event without polling"
+            )
+
+    result = watch_jobs.watch(
+        WATCH_JOBS, query, {"failed"}, {"completed"}, tmp_path, 1, resume=resume
+    )
+    assert len(attempts) == result["resume_attempts"] == 2
+    assert result["condition"] == "job_failed"
+    assert "resume_error" not in result
+    assert "resume_worker_returned_at_utc" in result
+    assert attempts[0]["checked_at_utc"] == attempts[1]["checked_at_utc"]

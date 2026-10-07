@@ -18,7 +18,8 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 - `watch_jobs.py --manifest FILE --state-dir DIR [--resume-config FILE]`:
   poll full MLS job IDs, persist status snapshots, and stop on the first terminal
   failure or complete success. With an Arkhip resume config, resume the bound
-  conversation once; bot credentials arrive via environment or a private FIFO,
+  conversation, retrying raised callback errors and recovering pending events;
+  bot credentials arrive via environment or a private FIFO,
   never the manifest. Run in the MLS client environment, detached in tmux;
   `--once` performs one check. See `experiments/qwen3_mmlu/GSM8K.md`.
 - `run.py eval --name gsm8k_baseline [--limit N]`: generative GSM8K evaluation

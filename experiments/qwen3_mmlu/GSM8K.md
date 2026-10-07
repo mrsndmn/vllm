@@ -38,7 +38,9 @@ terminated/deleted job or when every job completes successfully; API errors are
 recorded and retried. An optional Arkhip resume config binds the event to the
 original session and Telegram Topic. The bot token is passed only through the
 environment or a private FIFO. A per-directory lock prevents duplicate watchers,
-and a persisted event prevents duplicate resume calls. The watcher runs detached
+and a completed event prevents duplicate resume calls. Raised callback errors are
+recorded and retried; restart recovers an event whose callback did not return.
+The watcher runs detached
 in tmux, independently of the interactive worker.
 
 The model receives the question through its chat template, never the gold

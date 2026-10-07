@@ -78,11 +78,41 @@ def terminal_event(rows, terminal, success):
     return None
 
 
+def deliver_event(event, event_path, resume, interval, once):
+    """Retry pending callbacks without losing the detected terminal condition."""
+    if not resume:
+        return event
+    while True:
+        event["resume_requested_at_utc"] = datetime.now(timezone.utc).isoformat()
+        event["resume_attempts"] = event.get("resume_attempts", 0) + 1
+        write_state(event_path, event)
+        try:
+            resume(event_path)
+        except Exception as error:
+            event["resume_error"] = type(error).__name__
+            write_state(event_path, event)
+            print(
+                f"Resume callback error: {type(error).__name__}; event pending",
+                flush=True,
+            )
+            if once:
+                raise
+            time.sleep(interval)
+            continue
+        event.pop("resume_error", None)
+        event["resume_worker_returned_at_utc"] = datetime.now(timezone.utc).isoformat()
+        write_state(event_path, event)
+        return event
+
+
 def watch(jobs, query, terminal, success, state_dir, interval, resume=None, once=False):
-    """Persist snapshots; invoke resume once on failure or complete success."""
+    """Persist snapshots; resume on terminal conditions, recovering pending events."""
     event_path = state_dir / "event.json"
     if event_path.exists():
-        raise RuntimeError("Watcher already triggered; inspect event.json")
+        event = json.loads(event_path.read_text())
+        if "resume_worker_returned_at_utc" in event:
+            raise RuntimeError("Watcher already triggered; inspect event.json")
+        return deliver_event(event, event_path, resume, interval, once)
     while True:
         rows = snapshot(jobs, query)
         state = {"checked_at_utc": datetime.now(timezone.utc).isoformat(), "jobs": rows}
@@ -92,17 +122,7 @@ def watch(jobs, query, terminal, success, state_dir, interval, resume=None, once
             event.update(state)
             write_state(event_path, event)
             print(json.dumps(event), flush=True)
-            if resume:
-                event["resume_requested_at_utc"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-                write_state(event_path, event)
-                resume(event_path)
-                event["resume_worker_returned_at_utc"] = datetime.now(
-                    timezone.utc
-                ).isoformat()
-                write_state(event_path, event)
-            return event
+            return deliver_event(event, event_path, resume, interval, once)
         if once:
             print(json.dumps(state), flush=True)
             return None
