@@ -207,6 +207,27 @@ experiment_configs += [
     dict(GSM8K_CONFIG, name=name)
     for name in ("gsm8k_baseline", "gsm8k_baseline_repeat")
 ]
+experiment_configs += [
+    dict(
+        GSM8K_CONFIG,
+        name=f"gsm8k_{site}_q{quantile:g}",
+        round_activations_site=site,
+        round_activations_quantile=quantile,
+    )
+    for site, quantile in (
+        ("mlp", 0.5),
+        ("mlp", 0.8),
+        ("moe_out", 0.4),
+        ("block", 0.25),
+    )
+]
+experiment_configs.append(
+    dict(
+        GSM8K_CONFIG,
+        name="gsm8k_adapt_mlp_b0.8",
+        round_activations_quantiles=list(ADAPTIVE_SCHEDULES[("mlp", 0.8)]),
+    )
+)
 ARTIFACTS = Path(CONFIG["artifacts"])
 URL = f"http://127.0.0.1:{CONFIG['port']}"
 SCRIPT = Path(__file__).resolve()

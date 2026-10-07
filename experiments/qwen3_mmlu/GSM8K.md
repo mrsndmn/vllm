@@ -47,16 +47,18 @@ and every gold answer was parsed. All 107 regression tests and pre-commit checks
 passed; independent adversarial review returned APPROVE.
 
 Full benchmark results are pending. MLS payloads and dispatch were tested with
-the existing test fixtures; no jobs were submitted. A live launcher dry run
-could not proceed because the existing MLS client environment lacks `regex`.
+the existing test fixtures. The missing `regex` dependency in the MLS client
+environment was installed before preparing submission of the selected sweep.
 
 ## Conclusions
 
 The shared launcher and generation engine support an independent GSM8K baseline
-and repeat. Further zeroing arms can be added through the source registry.
+and repeat plus selected uniform/adaptive zeroing arms transferred from MMLU.
+The adaptive schedule is reused without tuning on GSM8K.
 
 ## Changelog
 
 - 2026-10-07: Added GSM8K loading, numeric exact-match evaluation, registry rows,
   task-specific summaries, and regression checks.
 - 2026-10-07: Completed the local model smoke check and independent review.
+- 2026-10-07: Registered the selected MMLU zeroing variants for transfer to GSM8K.

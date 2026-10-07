@@ -18,6 +18,7 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 - `run.py eval --name gsm8k_baseline [--limit N]`: generative GSM8K evaluation
   against the matching local server; `gsm8k.py` parses numeric answers.
 - `run_jobs.py --filter 'gsm8k_*' [--dry] [--limit N]`: GSM8K baseline/repeat
+  and selected uniform/adaptive zeroing arms transferred from MMLU,
   through the shared MLS launcher. Dataset and protocol settings are in
   `run.py:experiment_configs`; GSM8K may fetch the pinned dataset into HF cache.
 - `chat_eval.py summarize --task gsm8k_chat [--filter GLOB]`: validate full

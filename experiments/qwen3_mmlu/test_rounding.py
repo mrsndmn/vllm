@@ -1687,32 +1687,47 @@ def test_gsm8k_forced_number_rejects_truncated_continuations(finish):
     assert calls[1]["max_tokens"] == run.GSM8K_CONFIG["chat_max_answer_tokens"]
 
 
-def test_gsm8k_local_eval_and_mls_payload_use_shared_launcher(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "name",
+    [
+        "gsm8k_baseline",
+        "gsm8k_baseline_repeat",
+        "gsm8k_mlp_q0.5",
+        "gsm8k_mlp_q0.8",
+        "gsm8k_moe_out_q0.4",
+        "gsm8k_block_q0.25",
+        "gsm8k_adapt_mlp_b0.8",
+    ],
+)
+def test_gsm8k_local_eval_and_mls_payload_use_shared_launcher(
+    tmp_path, monkeypatch, name
+):
+    config = run_jobs.job_configs(name)[0]
     calls = fake_eval_server(
         tmp_path,
         monkeypatch,
         {
-            "site": "mlp",
-            "epsilon": 0.0,
-            "quantile": 0.0,
+            "site": config["round_activations_site"],
+            "epsilon": config["round_activations_eps"],
+            "quantile": config["round_activations_quantile"],
+            "quantiles": config.get("round_activations_quantiles"),
         },
     )
-    run.select("gsm8k_baseline")
+    run.select(name)
     output = run.evaluate(2)
     assert output.parent == tmp_path / "gsm8k-smoke"
     stored = json.loads((output / "experiment.json").read_text())
-    assert stored["task"] == gsm8k.TASK
+    assert stored == config
     assert "HF_DATASETS_OFFLINE" not in calls[0][1]["env"]
-    config = run_jobs.job_configs("gsm8k_baseline")[0]
     payload = run_jobs.payload(config, tmp_path, 2, "SR004")
-    assert payload["script"].endswith("run.py job --name gsm8k_baseline --limit 2")
+    assert payload["script"].endswith(f"run.py job --name {name} --limit 2")
 
 
 def test_gsm8k_summary_keeps_baseline_separate_from_mmlu(tmp_path, monkeypatch):
     configs = [
         dict(c, chat_expected_questions=2)
         for c in run.experiment_configs
-        if c["task"] == gsm8k.TASK
+        if c["name"] in ("gsm8k_baseline", "gsm8k_baseline_repeat")
     ]
     monkeypatch.setattr(run, "experiment_configs", configs)
     monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
