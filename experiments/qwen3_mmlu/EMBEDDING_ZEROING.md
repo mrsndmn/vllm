@@ -49,3 +49,4 @@ compare input-only against joint pruning and do not establish output-only scores
 
 - 2026-10-08: Added per-token magnitude zeroing and the full evaluation registry.
 - 2026-10-08: Validated all completed evaluations and recorded benchmark findings.
+- 2026-10-08: Extended the input-only sparsity sweep; additional results pending.

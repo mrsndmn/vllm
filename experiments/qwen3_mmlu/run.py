@@ -383,7 +383,9 @@ experiment_configs += [
     )
     for baseline in WEIGHT_BASELINES
     for scope in ("embedding", "both")
-    for quantile in (0.5, 0.7, 0.9)
+    for quantile in (
+        (0.5, 0.7, 0.9, 0.95, 0.97, 0.99) if scope == "embedding" else (0.5, 0.7, 0.9)
+    )
 ]
 for row in experiment_configs:
     if row["task"].startswith("ruler_"):

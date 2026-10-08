@@ -2340,10 +2340,19 @@ def test_embedding_zeroing_handles_scope_tying_and_vocab_padding(scope, tied):
 
 
 def test_embedding_weight_registry_covers_every_baseline_except_mmlu_pro(monkeypatch):
-    """All six weight arms inherit benchmark protocols without activation zeroing."""
+    """Weight arms inherit protocols; extreme sparsity affects input weights only."""
     rows = [c for c in run.experiment_configs if c.get("weight_zeroing")]
-    assert len(rows) == 60
-    assert len({c["name"] for c in rows}) == 60
+    assert len(rows) == 90
+    assert len({c["name"] for c in rows}) == 90
+    for task in {c["task"] for c in rows}:
+        assert {
+            (c["weight_zeroing"]["scope"], c["weight_zeroing"]["quantile"])
+            for c in rows
+            if c["task"] == task
+        } == {
+            *(("embedding", q) for q in (0.5, 0.7, 0.9, 0.95, 0.97, 0.99)),
+            *(("both", q) for q in (0.5, 0.7, 0.9)),
+        }
     assert {c["task"] for c in rows} == {
         "mmlu_stem_chat",
         "gsm8k_chat",
@@ -2353,7 +2362,7 @@ def test_embedding_weight_registry_covers_every_baseline_except_mmlu_pro(monkeyp
         assert row["round_activations_quantile"] == 0
         assert row["round_activations_eps"] == 0
         assert not row.get("round_activations_quantiles")
-        assert row["weight_zeroing"]["quantile"] in (0.5, 0.7, 0.9)
+        assert row["weight_zeroing"]["quantile"] in (0.5, 0.7, 0.9, 0.95, 0.97, 0.99)
         baseline_name = row["name"].split("weight_", 1)[0] + "baseline"
         baseline = next(
             c for c in run.experiment_configs if c.get("name") == baseline_name
