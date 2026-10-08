@@ -404,6 +404,9 @@ def summarize(pattern="*", baseline=None, task=TASK):
         writer.writeheader()
         writer.writerows(rows)
     stem.with_name(stem.name + "-summary.json").write_text(json.dumps(rows, indent=2))
+    import metrics_heatmap
+
+    metrics_heatmap.summary(rows, stem.with_name(stem.name + "-summary"))
     print(json.dumps(rows, indent=2))
     return rows
 

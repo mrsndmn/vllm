@@ -2439,3 +2439,28 @@ def test_transfer_summary_labels_each_weight_arm_and_preserves_baseline(
     assert rows[names[2]]["weight_scope"] == "both"
     assert rows[names[2]]["weight_quantile"] == 0.9
     assert all(r["delta_baseline_pp"] == 0 for r in rows.values())
+    assert (tmp_path / "benchmarks-summary.png").read_bytes().startswith(b"\x89PNG")
+    assert (tmp_path / "benchmarks-heatmap.png").read_bytes().startswith(b"\x89PNG")
+
+
+def test_heatmap_scores_align_tasks_and_keep_pending_distinct_from_zero():
+    """Mixed summary units and missing results cannot silently become zero scores."""
+    import metrics_heatmap
+
+    rows = [
+        dict(experiment="chat_baseline", task="mmlu_stem_chat", accuracy_percent=80),
+        dict(
+            experiment="chat_weight_embedding_q0.99",
+            task="mmlu_stem_chat",
+            accuracy_percent=0,
+        ),
+        dict(experiment="suite_math500_baseline", task="math500", accuracy=0.5),
+    ]
+    expected = [dict(name="suite_math500_weight_embedding_q0.99", task="math500")]
+    arms, tasks, scores, delta = metrics_heatmap.score_matrix(rows, expected)
+    i = arms.index("weight_embedding_q0.99")
+    assert scores[i, tasks.index("mmlu_stem_chat")] == 0
+    assert delta[i, tasks.index("mmlu_stem_chat")] == -80
+    assert scores[arms.index("baseline"), tasks.index("math500")] == 50
+    assert np.isnan(scores[i, tasks.index("math500")])
+    assert np.isnan(delta[i, tasks.index("math500")])

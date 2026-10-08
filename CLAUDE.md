@@ -15,6 +15,12 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- `chat_eval.py summarize` and `benchmark_eval.py summarize` always save a PNG
+  heatmap beside their JSON/CSV summaries and refresh `benchmarks-heatmap.png`.
+  `metrics_heatmap.py [--filter GLOB]` regenerates the combined heatmap from
+  saved summaries; unfinished selected arms appear as pending, not zero.
+  When the user asks for metrics, send the heatmap by default.
+
 - `run_jobs.py --filter '*weight_*' [--limit N] [--dry]`: per-token input/output
   weight-zeroing eval arms across baselines except MMLU-Pro. The registry lives
   in `run.py`; `rounding_server.py` passes its weight config to the worker.
