@@ -187,3 +187,18 @@ Artifacts are outside the checkout. Every registry row is named
 `experiments/qwen3_mmlu`, using
 `/workspace-SR004.nfs2/d.tarasov/envs/vllm_cu126` (`~/.mlspace` is not mounted
 in job containers). Domain terms are in `CONTEXT.md`; decisions in `docs/adr/`.
+
+- `make tables`: offline paper workload analysis from completed baseline/repeat
+  generative runs via `scripts/paper/token_lengths.py`; validates source configs
+  and complete sample sets. Writes benchmark-column input/output text-length and
+  sample-count tables under `paper/tables/`, with checksum provenance. CSV/JSON/MD
+  live outside the checkout under the experiment artifact root. `--filter GLOB`,
+  `--tables DIR`, and `--output DIR` select other arms and destinations. Excludes
+  reference profiling. Output counts retokenized model-written text, including
+  forced continuations but excluding injected suffixes and invisible stop tokens;
+  input counts only the initial prompt, including the chat template.
+- `make paper-check` / `make paper` / `make paper-clean`: validate sources, render
+  `paper/build/article.pdf` with latexmk, or remove LaTeX outputs. Edit prose in
+  `paper/article.tex`, `paper/sections/`, `paper/appendix.tex`; regenerate generated
+  tables through their script. Hand-authored tables go in `paper/tables/manual/`.
+  See `paper/README.md`. Paper builds do not rerun model evaluation.

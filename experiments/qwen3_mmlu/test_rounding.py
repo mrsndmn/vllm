@@ -2477,3 +2477,117 @@ def test_empty_benchmark_summary_saves_pending_heatmap(tmp_path, monkeypatch):
     benchmark_eval.summarize()
     assert json.loads((tmp_path / "benchmarks-summary.json").read_text()) == []
     assert (tmp_path / "benchmarks-summary.png").read_bytes().startswith(b"\x89PNG")
+
+
+def paper_module(name):
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    path = (
+        (root / "scripts/paper/token_lengths.py")
+        if name == "token_lengths"
+        else (root / "paper/lint_paper.py")
+    )
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_paper_lengths_include_forced_answer_but_not_injected_suffix():
+    module = paper_module("token_lengths")
+    config = dict(name="gsm8k_baseline", task="gsm8k_chat", chat_expected_questions=2)
+    records = [
+        dict(subject="gsm8k", index=0, prompt="aa", reasoning="bbb", mode="natural"),
+        dict(
+            subject="gsm8k",
+            index=1,
+            prompt="aaaa",
+            reasoning="bb",
+            mode="forced_cap",
+            forced_text="cc",
+            forced_suffix="this injected suffix is not output",
+        ),
+    ]
+    result = module.summarize(records, config, len)
+    assert result["mean_input_tokens"] == 3
+    assert result["mean_output_text_tokens"] == 3.5
+    with pytest.raises(ValueError, match="Incomplete samples"):
+        module.summarize(records[:1], config, len)
+    with pytest.raises(ValueError, match="Duplicate sample IDs"):
+        module.summarize([records[0], records[0]], config, len)
+    del records[1]["forced_text"]
+    with pytest.raises(ValueError, match="Missing forced continuation"):
+        module.summarize(records, config, len)
+
+
+def test_paper_transfer_lengths_count_original_response_and_validate_input():
+    module = paper_module("token_lengths")
+    config = dict(
+        name="suite_ruler_8k_baseline",
+        task="ruler_8k",
+        benchmark=dict(expected_questions=1),
+    )
+    record = dict(
+        id="task/0",
+        prompt="abcd",
+        input_tokens=4,
+        response="abc",
+        completion_tokens=4,
+        solution="sanitized code",
+    )
+    result = module.summarize([record], config, len)
+    assert result["mean_output_text_tokens"] == 3
+    assert result["mean_input_tokens"] == 4
+    record["input_tokens"] = 5
+    with pytest.raises(ValueError, match="Input token count mismatch"):
+        module.summarize([record], config, len)
+
+
+def test_paper_matrix_uses_benchmark_columns_and_marks_missing_cells():
+    module = paper_module("token_lengths")
+    rows = [
+        dict(experiment="chat_baseline", task="mmlu_stem_chat", mean_input_tokens=12),
+        dict(
+            experiment="gsm8k_baseline_repeat", task="gsm8k_chat", mean_input_tokens=34
+        ),
+    ]
+    text = module.render(rows, "mean_input_tokens")
+    assert "| Experiment | MMLU STEM | GSM8K |" in text
+    assert "| baseline | 12.0 | -- |" in text
+    assert "| baseline_repeat | -- | 34.0 |" in text
+    tex = module.render(rows, "mean_input_tokens", latex=True)
+    assert r"baseline\_repeat" in tex
+    assert "34.0" in tex
+
+
+def test_paper_lint_rejects_missing_assets_raw_tables_and_nan(tmp_path):
+    module = paper_module("lint_paper")
+    (tmp_path / "article.tex").write_text(
+        r"\input{tables/good}"
+        "\n"
+        r"\includegraphics{missing}"
+        "\n"
+        r"\begin{tabular}{lr}"
+        "\n"
+    )
+    (tmp_path / "tables").mkdir()
+    (tmp_path / "tables/good.tex").write_text("value & nan \\\\\n")
+    errors = module.checks(tmp_path)
+    assert any("missing includegraphics" in error for error in errors)
+    assert any("raw tables" in error for error in errors)
+    assert any("NaN" in error for error in errors)
+    (tmp_path / "article.tex").write_text(r"\input{tables/good}")
+    (tmp_path / "tables/good.tex").write_text("value & 1.0 \\\\\n")
+    assert module.checks(tmp_path) == []
+
+    nested = tmp_path / "figures/nested"
+    nested.mkdir(parents=True)
+    image = nested / "plot.png"
+    image.write_bytes(b"fixture")
+    assert any("unused attachment" in error for error in module.checks(tmp_path))
+    (tmp_path / "article.tex").write_text(r"\input{tables/good}\includegraphics{plot}")
+    assert module.checks(tmp_path) == []
+    (tmp_path / "figures/plot.png").write_bytes(b"duplicate")
+    assert any("duplicate attachment" in error for error in module.checks(tmp_path))
