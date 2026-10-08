@@ -10,6 +10,7 @@ import hashlib
 import json
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,6 +62,13 @@ def summarize(records, config, count):
     ]
     if len(set(keys)) != len(keys):
         raise ValueError(f"Duplicate sample IDs: {config['name']}")
+    if config["task"] == "mmlu_stem_chat":
+        coverage = Counter(record["subject"] for record in records)
+        expected = Counter(
+            dict.fromkeys(config["chat_subjects"], config["chat_per_subject"])
+        )
+        if coverage != expected:
+            raise ValueError(f"MMLU subject coverage differs: {config['name']}")
     inputs, outputs = [], []
     for record in records:
         inputs.append(count(record["prompt"]))

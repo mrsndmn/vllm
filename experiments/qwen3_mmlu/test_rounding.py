@@ -2591,3 +2591,26 @@ def test_paper_lint_rejects_missing_assets_raw_tables_and_nan(tmp_path):
     assert module.checks(tmp_path) == []
     (tmp_path / "figures/plot.png").write_bytes(b"duplicate")
     assert any("duplicate attachment" in error for error in module.checks(tmp_path))
+
+
+def test_paper_mmlu_rejects_wrong_subject_coverage_despite_complete_count():
+    module = paper_module("token_lengths")
+    config = dict(
+        name="chat_baseline",
+        task="mmlu_stem_chat",
+        chat_subjects=["anatomy", "astronomy"],
+        chat_per_subject=2,
+    )
+    records = [
+        dict(subject=subject, index=index, prompt="aa", reasoning="b", mode="natural")
+        for subject in config["chat_subjects"]
+        for index in range(2)
+    ]
+    assert module.summarize(records, config, len)["questions"] == 4
+    records[-1]["subject"] = "unexpected_subject"
+    with pytest.raises(ValueError, match="MMLU subject coverage differs"):
+        module.summarize(records, config, len)
+    records[-1]["subject"] = "anatomy"
+    records[-1]["index"] = 2
+    with pytest.raises(ValueError, match="MMLU subject coverage differs"):
+        module.summarize(records, config, len)
