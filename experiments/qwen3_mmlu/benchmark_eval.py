@@ -378,7 +378,11 @@ def summarize():
         writer.writerows(pivot.values())
     import metrics_heatmap
 
-    metrics_heatmap.summary(rows, run.ARTIFACTS / "benchmarks-summary")
+    metrics_heatmap.summary(
+        rows,
+        run.ARTIFACTS / "benchmarks-summary",
+        [c for c in run.experiment_configs if c["task"] in run.BENCHMARK_CONFIGS],
+    )
     print(json.dumps(rows, indent=2))
 
 

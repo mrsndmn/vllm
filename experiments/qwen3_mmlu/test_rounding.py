@@ -2464,3 +2464,16 @@ def test_heatmap_scores_align_tasks_and_keep_pending_distinct_from_zero():
     assert scores[arms.index("baseline"), tasks.index("math500")] == 50
     assert np.isnan(scores[i, tasks.index("math500")])
     assert np.isnan(delta[i, tasks.index("math500")])
+
+
+def test_empty_benchmark_summary_saves_pending_heatmap(tmp_path, monkeypatch):
+    """A registry with no finished jobs still produces a summary and pending plot."""
+    config = next(
+        c for c in run.experiment_configs if c["name"] == "suite_math500_baseline"
+    )
+    monkeypatch.setattr(run, "experiment_configs", [config])
+    monkeypatch.setattr(run, "BENCHMARK_CONFIGS", {"math500": {}})
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    benchmark_eval.summarize()
+    assert json.loads((tmp_path / "benchmarks-summary.json").read_text()) == []
+    assert (tmp_path / "benchmarks-summary.png").read_bytes().startswith(b"\x89PNG")

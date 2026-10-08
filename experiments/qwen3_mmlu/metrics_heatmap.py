@@ -161,6 +161,8 @@ def combined(extra_rows=(), pattern="*weight_*"):
     configs = [
         c for c in run.experiment_configs if fnmatch.fnmatchcase(c["name"], pattern)
     ]
+    if not configs:
+        return None
     tasks = {c["task"] for c in configs}
     configs += [
         c
@@ -173,16 +175,18 @@ def combined(extra_rows=(), pattern="*weight_*"):
     return save(rows, run.ARTIFACTS / "benchmarks-heatmap.png", configs)
 
 
-def summary(rows, stem):
+def summary(rows, stem, expected=None):
     """Write a PNG beside each summary and refresh the combined weight heatmap."""
     tasks = {r["task"] for r in rows}
     arms = {arm(r["experiment"], r["task"]) for r in rows}
-    expected = [
-        c
-        for c in run.experiment_configs
-        if c["task"] in tasks and arm(c["name"], c["task"]) in arms
-    ]
-    save(rows, Path(str(stem) + ".png"), expected)
+    if expected is None:
+        expected = [
+            c
+            for c in run.experiment_configs
+            if c["task"] in tasks and arm(c["name"], c["task"]) in arms
+        ]
+    if rows or expected:
+        save(rows, Path(str(stem) + ".png"), expected)
     combined(rows)
 
 
@@ -190,4 +194,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--filter", default="*weight_*")
     args = parser.parse_args()
-    print(combined(pattern=args.filter))
+    path = combined(pattern=args.filter)
+    if path is None:
+        parser.error("No experiments match the filter")
+    print(path)
