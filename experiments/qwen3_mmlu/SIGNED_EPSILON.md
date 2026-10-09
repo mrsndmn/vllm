@@ -69,19 +69,35 @@ net additional passes came from pairs where neither output was truncated. No
 primary pair reaches unadjusted 0.05 significance on this benchmark. Full base/plus
 metrics and paired/truncation comparisons are saved externally; the combined
 heatmap includes five completed benchmarks.
+GPQA Diamond completed with all 198 questions, matching source configs, manifests,
+question content and prompts. Saved answer parsing/correctness was recomputed from
+the generated responses, and all metric aggregates matched. Baseline scored 44.95%.
+Signed activations changed accuracy by -0.51 and +7.07 points against zero controls;
+signed expert weights by -0.51 and +11.62 points. The larger weight gain was 39 fixed
+versus 16 broken answers (exact paired p=0.00267); it survives correction over four
+GPQA pairs but not over all 28 planned primary comparisons. For that weight pair,
+truncations dropped from 84 to 41 and unparsed answers from 100 to 48 (overlapping
+categories, included as failures). Pairs with neither output truncated contributed
++10 net correct answers, and pairs with at least one truncation contributed +13.
+The activation gain has unadjusted p=0.0488 and does not survive correction. Results
+reflect both answer correctness and completion/parsing behavior under the existing
+protocol. Full metrics and paired/decomposition results are saved externally; the
+heatmap includes six completed benchmarks.
 Completed baseline and activation-zeroing controls are reused.
 
 ## Conclusions
 
 The stronger tested weight transformation benefits from signed replacement on
-all five completed benchmarks under the existing end-to-end evaluation protocol.
+all six completed benchmarks under the existing end-to-end evaluation protocol.
 The large IFEval and MATH-500 gains involve fewer truncated outputs. MATH-500 does
 not show a net improvement among pairs where both outputs finish within budget,
 so its result does not establish better answer correctness independent of budget.
 HumanEval+ also favors signed replacement of the stronger weight transformation
 among pairs without truncation, although its paired evidence is not significant.
+GPQA also shows fewer truncated/unparsed outputs alongside its larger weight gain;
+its paired gain is not significant after correction over the whole planned sweep.
 The lighter weight transformation and both activation variants vary by benchmark.
-Wait for the remaining benchmarks and account for multiple comparisons. Tensor MSE
+Wait for the remaining benchmark and account for multiple comparisons. Tensor MSE
 improvements do not guarantee improvements in model accuracy.
 
 ## Changelog
@@ -99,3 +115,5 @@ improvements do not guarantee improvements in model accuracy.
   recorded paired/truncation comparisons, and refreshed the four-benchmark heatmap.
 - 2026-10-09: All HumanEval+ jobs completed; validated provenance and saved
   base/plus outcomes, recorded paired comparisons, and refreshed the five-benchmark heatmap.
+- 2026-10-09: All GPQA Diamond jobs completed; validated provenance, parsing
+  and metrics, recorded paired comparisons, and refreshed the six-benchmark heatmap.
