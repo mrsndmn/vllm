@@ -1,0 +1,93 @@
+\section{Zeroing with extended reasoning}
+\label{sec:thinking-zeroing}
+We transferred seven previously selected interventions, together with an
+unmodified baseline and its repeat, to Qwen3-30B-A3B-Thinking-2507. Each arm
+was evaluated on MATH500 and GPQA Diamond with thinking enabled and a maximum
+of 32,768 generated tokens shared by reasoning and the final answer. The
+interventions comprise input embedding weight zeroing at 70\% and 90\%,
+input embedding plus output-head weight zeroing at 50\%, MLP intermediate
+activation zeroing at 50\% and 80\%, block residual-stream activation zeroing
+at 25\%, and MoE output activation zeroing at 40\%. Weight selection is
+independent within each token vector, while activation selection is per token
+at each selected site. These are inference-time interventions without fine-tuning.
+The submitted source registry defines the complete protocol and intervention
+configuration; this series uses its own baseline rather than the earlier
+instruct checkpoint's baseline.
+
+All 18 evaluations completed, covering 500 mathematics questions and 198
+scientific reasoning questions per arm. We checked saved configurations,
+frozen dataset manifests, complete question coverage, identical prompts across
+arms, and metrics recomputed from saved samples. Final-answer extraction and
+correctness were independently rechecked for all 6,282 responses using the
+submitted grading code. Grading uses only the final response following the
+closing reasoning delimiter. Responses with incomplete reasoning or reaching
+the generation cap count as incorrect.
+
+\begin{table}[ht]
+\centering
+\caption{Accuracy (\%) with the thinking checkpoint and extended generation
+budget. MLP, block and MoE output rows zero activations; embedding rows zero
+weights.}
+\label{tab:thinking-accuracy}
+\input{tables/manual/thinking_accuracy}
+\end{table}
+
+Table~\ref{tab:thinking-accuracy} shows that all selected interventions retain
+high MATH500 accuracy: 97.20--98.40\%, compared with 98.60\% for baseline
+and 97.80\% for its repeat. Input embedding zeroing at 90\% scores 98.20\%
+on MATH500 and 70.71\% on GPQA. MLP activation zeroing at 50\% scores
+98.40\% and 68.69\%, respectively. No intervention exceeds the first baseline
+on MATH500. On GPQA, the baseline repeat improves from 67.68\% to 70.71\%,
+a difference of six questions or 3.03 percentage points. The apparent gains
+from embedding 90\% and MoE output 40\% fall within this observed variation;
+these single intervention runs do not establish a reliable improvement.
+
+\begin{table}[ht]
+\centering
+\caption{Mean input and output tokens per question for the thinking series.
+Input is the initial prompt including the chat template; output is server-reported
+completion usage, including reasoning, the final answer and generated special
+tokens. All responses, including incorrect and capped responses, enter the mean.}
+\label{tab:thinking-lengths}
+\input{tables/manual/thinking_token_lengths}
+\end{table}
+
+Table~\ref{tab:thinking-lengths} separates the two benchmarks rather than
+pooling their different question counts. Input length is computed offline using
+the pinned checkpoint tokenizer with no additional special tokens. Unlike the
+retokenized output text lengths in Table~\ref{tab:output-lengths}, the output
+counts here use saved completion usage. They include the full reasoning trace,
+not only the final answer. None of these runs uses a forced-answer continuation.
+These counts characterize generation workload and do not measure latency or
+establish a serving speedup.
+
+Joint input embedding and output-head zeroing at 50\% scores 97.80\% on
+MATH500 and 65.66\% on GPQA. It also exhausts the generation budget on 5/500
+mathematics responses and 19/198 GPQA responses; respectively five and eighteen
+lack a closing reasoning delimiter. Neither GPQA baseline run reaches the cap.
+Thus similar aggregate accuracy can coexist with increased generation workload
+and more incomplete responses. The capped runs remain in both the accuracy and
+length summaries; their observed lengths do not estimate uncapped output length.
+Mean output usage for this joint weight intervention increases from 5,553.1 to
+6,692.1 tokens on MATH500 (20.5\%) and from 7,229.8 to 10,342.7 tokens on
+GPQA (43.1\%) relative to the first baseline. In contrast, MLP activation
+zeroing at 80\% reduces MATH500 output usage to 4,593.8 tokens (17.3\%
+below baseline), alongside an accuracy decrease of 1.40 percentage points.
+Identical prompts give the same mean input length across all nine arms:
+102.9 tokens for MATH500 and 241.8 for GPQA.
+Comparisons with earlier instruct results change both the checkpoint and budget,
+so they cannot isolate the effect of enabling thinking.
+
+\paragraph{Result provenance.}
+{\raggedright
+The submitted source snapshot is
+\texttt{a13fc09b0db6514984e495ab489919f4529ae42d}, whose
+\texttt{run.py:experiment\_configs} defines this series. Validated scores and
+complete job identifiers are saved in
+\path{run/thinking32k/benchmarks-summary.json} and
+\path{run/thinking32k/jobs.json}. The checked-in
+\path{paper/tables/thinking-token-lengths-provenance.json} records sample and
+configuration checksums, the pinned tokenizer and its checksums, and unrounded
+length means. Tables transcribe these validated values; accuracies are rounded
+to two decimals and lengths to one decimal.
+\par}

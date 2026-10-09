@@ -6,6 +6,13 @@ The manuscript reports baseline workload statistics and completed joint-zeroing
 quality results. `sections/joint-zeroing.tex` discusses all thirty full evaluations;
 `tables/manual/joint_zeroing.tex` transcribes their validated summary. Result
 provenance and single-run limitations are documented in that section.
+`sections/thinking-zeroing.tex` reports the eighteen completed thinking transfer
+evaluations. Its hand-authored accuracy and input/output-length tables transcribe
+validated saved results; `tables/thinking-token-lengths-provenance.json` records
+sample/configuration checksums, pinned tokenizer checksums and unrounded means.
+Here output length is saved completion usage including reasoning and generated
+special tokens, distinct from the retokenized text lengths of the workload tables.
+The thinking series' source registry is the submitted commit cited in its section.
 
 - Edit prose in `article.tex`, `sections/`, and `appendix.tex`.
 - Edit generated table logic in `../scripts/paper/token_lengths.py`, then run
