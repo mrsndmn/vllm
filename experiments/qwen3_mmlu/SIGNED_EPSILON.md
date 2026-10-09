@@ -46,18 +46,30 @@ one truncated output, and 10 from pairs where neither output was truncated.
 Truncations count as failures under the existing evaluation protocol. Strict/loose
 prompt and instruction metrics, paired comparisons and truncation decomposition
 are saved externally; the combined heatmap now includes three completed benchmarks.
+MATH-500 completed with all 500 questions, matching source configs, manifests,
+question content and prompts; saved aggregates were recomputed. The baseline
+scored 89.20%. Signed activations changed accuracy by +2.20 and -0.80 points
+against zero controls; signed expert weights by -2.00 and +6.20 points. The larger
+weight gain was 46 fixed versus 15 broken answers (exact paired p=8.84e-5), surviving
+Bonferroni correction across the 28 planned primary comparisons. Its accuracy was
+86.80%, still below baseline. Truncated outputs dropped from 91 to 54: pairs with
+at least one truncated output contributed +34 net correct answers; the 400 pairs
+with neither output truncated contributed -3. This descriptive decomposition
+shows the importance of the generation budget, without isolating a causal effect.
+Full metrics, paired tests and decomposition are saved externally; the heatmap now
+includes four completed benchmarks.
 Completed baseline and activation-zeroing controls are reused.
 
 ## Conclusions
 
 The stronger tested weight transformation benefits from signed replacement on
-all three completed benchmarks. IFEval shows a large gain, with most of the net
-improvement coming from pairs involving a truncated output. The lighter weight
-transformation is inconsistent; the stronger activation transformation improves
-all three benchmarks, while the lighter activation transformation is inconsistent.
-These results do not establish a universal advantage; wait for the remaining
-benchmarks and account for multiple comparisons. Tensor MSE improvements do not
-guarantee improvements in model accuracy.
+all four completed benchmarks under the existing end-to-end evaluation protocol.
+The large IFEval and MATH-500 gains involve fewer truncated outputs. MATH-500 does
+not show a net improvement among pairs where both outputs finish within budget,
+so its result does not establish better answer correctness independent of budget.
+The lighter weight transformation and both activation variants vary by benchmark.
+Wait for the remaining benchmarks and account for multiple comparisons. Tensor MSE
+improvements do not guarantee improvements in model accuracy.
 
 ## Changelog
 
@@ -70,3 +82,5 @@ guarantee improvements in model accuracy.
   recorded paired comparisons, and refreshed the combined completed-benchmark heatmap.
 - 2026-10-09: All IFEval jobs completed; validated provenance and full metrics,
   recorded paired/truncation comparisons, and refreshed the three-benchmark heatmap.
+- 2026-10-09: All MATH-500 jobs completed; validated provenance and full metrics,
+  recorded paired/truncation comparisons, and refreshed the four-benchmark heatmap.
