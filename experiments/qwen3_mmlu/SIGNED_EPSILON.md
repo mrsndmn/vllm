@@ -34,15 +34,30 @@ corresponds to 41 fixed versus 22 broken answers (exact paired p=0.0226 before
 multiplicity correction). It does not survive Bonferroni correction over the four
 GSM8K comparisons. Parsing failures remain included in accuracy. Summaries and
 paired tests are saved externally, along with a combined MMLU/GSM8K heatmap.
+IFEval completed with all 541 questions, matching source configs, dataset manifests,
+question content and prompts; saved metric aggregates were recomputed. The primary
+metric is strict prompt accuracy; the baseline scored 83.55%. Signed activations
+changed accuracy by -0.74 and +2.77 points against zero controls, and signed expert
+weights by -0.55 and +10.35 points. The larger weight gain was 73 fixed versus 17
+broken answers (exact paired p=1.95e-9), surviving Bonferroni correction across the
+28 planned primary zero-versus-epsilon comparisons. Truncated outputs dropped from
+65 to 8; 46 of the 56 net additional correct answers came from pairs with at least
+one truncated output, and 10 from pairs where neither output was truncated.
+Truncations count as failures under the existing evaluation protocol. Strict/loose
+prompt and instruction metrics, paired comparisons and truncation decomposition
+are saved externally; the combined heatmap now includes three completed benchmarks.
 Completed baseline and activation-zeroing controls are reused.
 
 ## Conclusions
 
 The stronger tested weight transformation benefits from signed replacement on
-both completed benchmarks. The lighter weight transformation is inconsistent
-across benchmarks, and activation gains are modest. These results do not establish
-a universal advantage; wait for the remaining benchmarks and account for multiple
-comparisons. Tensor MSE improvements do not guarantee improvements in model accuracy.
+all three completed benchmarks. IFEval shows a large gain, with most of the net
+improvement coming from pairs involving a truncated output. The lighter weight
+transformation is inconsistent; the stronger activation transformation improves
+all three benchmarks, while the lighter activation transformation is inconsistent.
+These results do not establish a universal advantage; wait for the remaining
+benchmarks and account for multiple comparisons. Tensor MSE improvements do not
+guarantee improvements in model accuracy.
 
 ## Changelog
 
@@ -53,3 +68,5 @@ comparisons. Tensor MSE improvements do not guarantee improvements in model accu
   recorded accuracy differences, paired comparisons, and a heatmap.
 - 2026-10-09: All GSM8K jobs completed; validated full records and aggregates,
   recorded paired comparisons, and refreshed the combined completed-benchmark heatmap.
+- 2026-10-09: All IFEval jobs completed; validated provenance and full metrics,
+  recorded paired/truncation comparisons, and refreshed the three-benchmark heatmap.
