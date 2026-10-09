@@ -58,15 +58,28 @@ with neither output truncated contributed -3. This descriptive decomposition
 shows the importance of the generation budget, without isolating a causal effect.
 Full metrics, paired tests and decomposition are saved externally; the heatmap now
 includes four completed benchmarks.
+HumanEval+ completed with all 164 tasks, matching source configs, manifests,
+question content and prompts. Saved aggregates and the base/plus pass conditions
+were verified without rerunning generated code. The primary metric is pass@1 on
+both base and extended tests; baseline scored 86.59%. Signed activations changed
+accuracy by -2.44 and +2.44 points against zero controls; signed expert weights by
++3.05 and +4.88 points. The larger weight gain was 13 fixed versus 5 broken tasks
+(exact paired p=0.0963). Both weight variants had two truncated outputs; all eight
+net additional passes came from pairs where neither output was truncated. No
+primary pair reaches unadjusted 0.05 significance on this benchmark. Full base/plus
+metrics and paired/truncation comparisons are saved externally; the combined
+heatmap includes five completed benchmarks.
 Completed baseline and activation-zeroing controls are reused.
 
 ## Conclusions
 
 The stronger tested weight transformation benefits from signed replacement on
-all four completed benchmarks under the existing end-to-end evaluation protocol.
+all five completed benchmarks under the existing end-to-end evaluation protocol.
 The large IFEval and MATH-500 gains involve fewer truncated outputs. MATH-500 does
 not show a net improvement among pairs where both outputs finish within budget,
 so its result does not establish better answer correctness independent of budget.
+HumanEval+ also favors signed replacement of the stronger weight transformation
+among pairs without truncation, although its paired evidence is not significant.
 The lighter weight transformation and both activation variants vary by benchmark.
 Wait for the remaining benchmarks and account for multiple comparisons. Tensor MSE
 improvements do not guarantee improvements in model accuracy.
@@ -84,3 +97,5 @@ improvements do not guarantee improvements in model accuracy.
   recorded paired/truncation comparisons, and refreshed the three-benchmark heatmap.
 - 2026-10-09: All MATH-500 jobs completed; validated provenance and full metrics,
   recorded paired/truncation comparisons, and refreshed the four-benchmark heatmap.
+- 2026-10-09: All HumanEval+ jobs completed; validated provenance and saved
+  base/plus outcomes, recorded paired comparisons, and refreshed the five-benchmark heatmap.
