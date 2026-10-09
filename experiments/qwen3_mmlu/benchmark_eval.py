@@ -329,6 +329,12 @@ def summarize():
         repeat = runs.get("suite_" + task + "_baseline_repeat")
         for name, (result, records, config) in runs.items():
             row = dict(experiment=name, **result)
+            row["replacement"] = config.get("round_activations_replacement", "zero")
+            if config.get("mlp_weight_rounding"):
+                row["mlp_weight_quantile"] = config["mlp_weight_rounding"]["quantile"]
+                row["mlp_weight_replacement"] = config["mlp_weight_rounding"][
+                    "replacement"
+                ]
             if config.get("weight_zeroing"):
                 row["weight_scope"] = config["weight_zeroing"]["scope"]
                 row["weight_quantile"] = config["weight_zeroing"]["quantile"]

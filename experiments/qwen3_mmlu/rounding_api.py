@@ -17,6 +17,9 @@ class RoundingMiddleware:
         self.app = app
         self.path = os.environ["ROUND_ACTIVATIONS_DB"]
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
+        self.replacement = os.environ.get("ROUND_ACTIVATIONS_REPLACEMENT", "zero")
+        mlp = os.environ.get("MLP_WEIGHT_ROUNDING")
+        self.mlp_weight_rounding = json.loads(mlp) if mlp else None
         self.eps = float(os.environ["ROUND_ACTIVATIONS_EPS"])
         self.quantile = float(os.environ.get("ROUND_ACTIVATIONS_QUANTILE", "0"))
         schedule = os.environ.get("ROUND_ACTIVATIONS_QUANTILES")
@@ -25,7 +28,7 @@ class RoundingMiddleware:
         self.weight_zeroing = json.loads(weights) if weights else None
 
     async def stats(self, response_id=None):
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             read_stats,
             self.path,
             self.site,
@@ -34,6 +37,8 @@ class RoundingMiddleware:
             self.quantile,
             self.quantiles,
         )
+        result["replacement"] = self.replacement
+        return result
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -49,7 +54,13 @@ class RoundingMiddleware:
                     "quantile": self.quantile,
                     "quantiles": self.quantiles,
                     "database": self.path,
+                    "replacement": self.replacement,
                 }
+                if self.mlp_weight_rounding:
+                    result["mlp_weight_rounding"] = self.mlp_weight_rounding
+                    result["mlp_weight_rounding_report"] = json.loads(
+                        Path(self.path).with_suffix(".mlp-weights.json").read_text()
+                    )
                 if self.weight_zeroing:
                     result["weight_zeroing"] = self.weight_zeroing
                     result["weight_zeroing_report"] = json.loads(

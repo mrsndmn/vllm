@@ -13,6 +13,7 @@ from pathlib import Path
 
 from embedding_zeroing import validate_config
 from rounding_stats import (
+    REPLACEMENTS,
     SITES,
     connect,
     validate_eps,
@@ -46,7 +47,21 @@ def main():
     parser.add_argument(
         "--weight-zeroing", type=lambda text: validate_config(json.loads(text))
     )
+    parser.add_argument(
+        "--round-activations-replacement", choices=REPLACEMENTS, default="zero"
+    )
+    from mlp_weight_rounding import validate_config as validate_mlp_config
+
+    parser.add_argument(
+        "--mlp-weight-rounding", type=lambda text: validate_mlp_config(json.loads(text))
+    )
     args, server_args = parser.parse_known_args()
+    if args.round_activations_replacement != "zero" and (
+        args.round_activations_site != "mlp"
+        or args.round_activations_eps
+        or args.round_activations_quantiles
+    ):
+        parser.error("Signed epsilon supports uniform MLP quantiles only")
     modes = (
         args.round_activations_eps,
         args.round_activations_quantile,
@@ -62,6 +77,10 @@ def main():
     connect(args.rounding_db).close()
     os.environ.update(
         {
+            "ROUND_ACTIVATIONS_REPLACEMENT": args.round_activations_replacement,
+            "MLP_WEIGHT_ROUNDING": json.dumps(args.mlp_weight_rounding)
+            if args.mlp_weight_rounding
+            else "",
             "ROUND_ACTIVATIONS_EPS": str(args.round_activations_eps),
             "ROUND_ACTIVATIONS_QUANTILE": str(args.round_activations_quantile),
             "ROUND_ACTIVATIONS_QUANTILES": json.dumps(args.round_activations_quantiles)

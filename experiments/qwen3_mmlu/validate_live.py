@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Capture original outputs or validate an instrumented local server."""
 
 import argparse
@@ -39,6 +42,7 @@ def check_counts(response, config):
     assert len(layers) == 48, stats
     width = 6144 if config["site"] == "mlp" else 2048
     schedule = config.get("quantiles")
+    signed = config.get("replacement", "zero") != "zero"
     assert len({layer["tokens"] for layer in layers}) == 1
     for index, layer in enumerate(layers):
         quantile = config.get("quantile", 0)
@@ -51,10 +55,17 @@ def check_counts(response, config):
         if not zeroing(config):
             assert layer["newly_zeroed_floats"] == 0
         if quantile:
+            if signed:
+                assert (
+                    layer["selected_floats"]
+                    >= math.floor(quantile * width) * layer["tokens"]
+                )
+                assert 0 <= layer["modified_floats"] <= layer["selected_floats"]
+                continue
             zero = layer["newly_zeroed_floats"] + layer["already_zero_floats"]
             assert zero >= math.floor(quantile * width) * layer["tokens"], layer
             assert layer["newly_zeroed_floats"] <= (quantile + 0.01) * layer["floats"]
-    if zeroing(config):
+    if zeroing(config) and not signed:
         assert sum(layer["newly_zeroed_floats"] for layer in layers) > 0
 
 
@@ -136,6 +147,8 @@ def main():
         strength = f"q{config['quantile']}"
     if config.get("quantiles"):
         strength = "s" + "_".join(map(str, config["quantiles"]))
+    if config.get("replacement", "zero") != "zero":
+        strength += "-" + config["replacement"]
     path = ARTIFACTS / f"validation-{config['site']}-{strength}.json"
     path.write_text(json.dumps(result, indent=2))
     print(f"Live checks passed: {path}")

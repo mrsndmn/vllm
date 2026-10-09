@@ -387,6 +387,44 @@ experiment_configs += [
         (0.5, 0.7, 0.9, 0.95, 0.97, 0.99) if scope == "embedding" else (0.5, 0.7, 0.9)
     )
 ]
+# Signed-epsilon sweep inherits each existing generative baseline protocol.
+EPSILON_TASKS = (
+    "mmlu_stem_chat",
+    "gsm8k_chat",
+    "math500",
+    "gpqa",
+    "ifeval",
+    "humaneval_plus",
+    "mbpp_plus",
+)
+EPSILON_BASELINES = [
+    row
+    for row in experiment_configs
+    if row["name"].endswith("_baseline")
+    and row["task"] in EPSILON_TASKS
+    and not row["name"].startswith("prof_")
+]
+experiment_configs += [
+    dict(
+        baseline,
+        name=baseline["name"].removesuffix("baseline") + f"mlp_signed_epsilon_q{q:g}",
+        round_activations_quantile=q,
+        round_activations_replacement="signed_epsilon_normal",
+    )
+    for baseline in EPSILON_BASELINES
+    for q in (0.5, 0.8)
+] + [
+    dict(
+        baseline,
+        name=baseline["name"].removesuffix("baseline") + f"mlp_weights_{mode}_q{q:g}",
+        mlp_weight_rounding=dict(quantile=q, replacement=mode, batch_rows=256),
+    )
+    for baseline in EPSILON_BASELINES
+    for mode in ("zero", "signed_epsilon_normal")
+    for q in (0.25, 0.5)
+]
+
+
 for row in experiment_configs:
     if row["task"].startswith("ruler_"):
         row.update(
@@ -552,6 +590,13 @@ def rounding_args():
             "--round-activations-quantiles",
             ",".join(map(str, CONFIG["round_activations_quantiles"])),
         ]
+    if CONFIG.get("round_activations_replacement"):
+        args += [
+            "--round-activations-replacement",
+            CONFIG["round_activations_replacement"],
+        ]
+    if CONFIG.get("mlp_weight_rounding"):
+        args += ["--mlp-weight-rounding", json.dumps(CONFIG["mlp_weight_rounding"])]
     if CONFIG.get("weight_zeroing"):
         args += ["--weight-zeroing", json.dumps(CONFIG["weight_zeroing"])]
     return args
@@ -563,6 +608,9 @@ def config_mismatch(actual):
         or actual["site"] != CONFIG["round_activations_site"]
         or actual.get("quantile", 0.0) != CONFIG.get("round_activations_quantile", 0.0)
         or actual.get("quantiles") != CONFIG.get("round_activations_quantiles")
+        or actual.get("replacement", "zero")
+        != CONFIG.get("round_activations_replacement", "zero")
+        or actual.get("mlp_weight_rounding") != CONFIG.get("mlp_weight_rounding")
         or actual.get("weight_zeroing") != CONFIG.get("weight_zeroing")
     )
 
@@ -700,6 +748,9 @@ def job(name, limit):
         "quantiles": CONFIG.get("round_activations_quantiles"),
         "output": str(output),
     } | ({"limit": limit} if limit else {})
+    marker["replacement"] = CONFIG.get("round_activations_replacement", "zero")
+    if CONFIG.get("mlp_weight_rounding"):
+        marker["mlp_weight_rounding"] = CONFIG["mlp_weight_rounding"]
     if smoke_output is not None:
         marker["smoke_output"] = str(smoke_output)
     if CONFIG.get("weight_zeroing"):

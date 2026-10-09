@@ -31,17 +31,29 @@ TAGS = "#ARKHIP #rnd #notify_completed @mrsndmn"
 REPO = Path(__file__).resolve().parents[2]
 
 
-def job_configs(pattern=None, analysis=False):
+def job_configs(pattern=None, analysis=False, signed_epsilon=False):
     if analysis:
         from compression import experiment_configs
     else:
         experiment_configs = run.experiment_configs
-    return [
+    configs = [
         config
         for config in experiment_configs
         if config.get("launcher") == "mls"
         and (not pattern or fnmatch.fnmatchcase(config["name"], pattern))
     ]
+    if signed_epsilon:
+        configs = [
+            c
+            for c in configs
+            if c["task"] in run.EPSILON_TASKS
+            and (
+                c.get("round_activations_replacement")
+                or c.get("mlp_weight_rounding")
+                or c["name"].endswith(("_mlp_q0.5", "_mlp_q0.8"))
+            )
+        ]
+    return configs
 
 
 def job_desc(config, limit):
@@ -143,7 +155,11 @@ def complete(config, marker):
 
 
 def launch(args):
-    configs = job_configs(args.filter, getattr(args, "analysis", False))
+    configs = job_configs(
+        args.filter,
+        getattr(args, "analysis", False),
+        getattr(args, "signed_epsilon_sweep", False),
+    )
     if not configs:
         raise SystemExit("No MLSpace experiments match")
     commit = committed_head()
@@ -187,6 +203,11 @@ def main():
     parser.add_argument("--filter", help="Glob over experiment names, e.g. 'chat_*'")
     parser.add_argument("--limit", type=int, help="Smoke-test items per subject")
     parser.add_argument(
+        "--signed-epsilon-sweep",
+        action="store_true",
+        help="Launch the MLP signed-epsilon sweep and matching zero controls only",
+    )
+    parser.add_argument(
         "--analysis",
         action="store_true",
         help="Checkpoint compression screening registry",
@@ -196,6 +217,8 @@ def main():
         parser.error("--limit must be positive")
     if args.analysis and args.limit:
         parser.error("--limit is for evaluation jobs, not compression analysis")
+    if args.analysis and args.signed_epsilon_sweep:
+        parser.error("signed epsilon is an evaluation sweep")
     launch(args)
 
 

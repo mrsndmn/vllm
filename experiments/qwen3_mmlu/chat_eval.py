@@ -373,6 +373,10 @@ def summarize(pattern="*", baseline=None, task=TASK):
             "min_layer_total_zero_percent": min(shares),
             "max_layer_total_zero_percent": max(shares),
         }
+        row["replacement"] = config.get("round_activations_replacement", "zero")
+        if config.get("mlp_weight_rounding"):
+            row["mlp_weight_quantile"] = config["mlp_weight_rounding"]["quantile"]
+            row["mlp_weight_replacement"] = config["mlp_weight_rounding"]["replacement"]
         if config.get("round_activations_quantiles"):
             row["quantiles"] = ",".join(map(str, config["round_activations_quantiles"]))
         if config.get("weight_zeroing"):

@@ -850,6 +850,9 @@ def test_launcher_skips_done_and_queued_and_dry_submits_nothing(tmp_path, monkey
         "chat_moe_out_q0.5",
         "chat_weight_embedding_q0.5",
         "chat_weight_both_q0.5",
+        "chat_mlp_signed_epsilon_q0.5",
+        "chat_mlp_weights_zero_q0.5",
+        "chat_mlp_weights_signed_epsilon_normal_q0.5",
     ]
 
 
@@ -1009,6 +1012,7 @@ def test_chat_registry_rows():
         and not c["name"].startswith(("chat_adapt_", "chat_moe_out_"))
         and "_eps" not in c["name"]
         and not c.get("weight_zeroing")
+        and not c.get("mlp_weight_rounding")
     ]
     assert [c["name"] for c in chat] == [
         "chat_baseline",
@@ -1039,7 +1043,10 @@ def test_generative_eps_and_moe_out_rows():
     rows = {
         c["name"]: c
         for c in run.experiment_configs
-        if "_eps" in c.get("name", "") or c.get("name", "").startswith("chat_moe_out")
+        if c.get("name", "").startswith(
+            tuple(f"chat_{site}_eps" for site in ("mlp", "block", "moe_out"))
+            + ("chat_moe_out",)
+        )
     }
     eps_names = [
         f"chat_{site}_eps{eps}"
@@ -2133,7 +2140,7 @@ def test_ruler_rejects_overflow_without_truncating_needle():
 
 def test_ruler_long_context_arms_preserve_zeroing_and_share_server_settings():
     rows = run_jobs.job_configs("suite_ruler_*")
-    assert len(rows) == 39
+    assert len(rows) == 48
     for row in rows:
         assert row["max_model_len"] == row["benchmark"]["context_length"]
         assert row["chat_concurrency"] == row["max_num_seqs"] == 2
@@ -2614,3 +2621,162 @@ def test_paper_mmlu_rejects_wrong_subject_coverage_despite_complete_count():
     records[-1]["index"] = 2
     with pytest.raises(ValueError, match="MMLU subject coverage differs"):
         module.summarize(records, config, len)
+
+
+@pytest.mark.parametrize("q", [0.25, 0.5, 0.8])
+def test_signed_epsilon_preserves_sign_and_reduces_normal_mse(q):
+    from rounding_stats import normal_coefficient
+
+    generator = torch.Generator().manual_seed(42)
+    original = torch.randn(8, 4096, generator=generator)
+    zeroed, replaced = original.clone(), original.clone()
+    threshold(zeroed, 0, quantile=q)
+    counts = threshold(replaced, 0, quantile=q, replacement="signed_epsilon_normal")
+    mask = zeroed == 0
+    cutoff = original.abs().kthvalue(math.floor(q * 4096), dim=1).values
+    expected = original.sign() * (cutoff * normal_coefficient(q))[:, None]
+    assert torch.allclose(replaced[mask], expected[mask])
+    assert torch.equal(replaced[~mask], original[~mask])
+    assert torch.equal(replaced.sign(), original.sign())
+    assert ((replaced - original) ** 2).mean() < ((zeroed - original) ** 2).mean()
+    assert torch.all(counts[:, 1] == 0)
+    assert torch.equal(counts[:, 6], mask.sum(dim=1))
+
+
+def test_signed_epsilon_keeps_original_zeros_and_reports_actual_changes():
+    from rounding_stats import normal_coefficient
+
+    values = torch.tensor([[0.0, -0.0, -1.0, 1.0, 4.0, -5.0, 6.0, 7.0]])
+    counts = threshold(values, 0, quantile=0.5, replacement="signed_epsilon_normal")
+    eps = normal_coefficient(0.5)
+    assert torch.allclose(values[0, 2:4], torch.tensor([-eps, eps]))
+    assert values[0, 0] == 0 and torch.signbit(values[0, 1])
+    assert counts.tolist() == [[8, 0, 2, 1, 1, 0, 4, 2]]
+    original = values.clone()
+    threshold(values, 0, quantile=0, replacement="signed_epsilon_normal")
+    assert torch.equal(values, original)
+    assert threshold(
+        torch.empty(0, 8), 0, quantile=0.5, replacement="signed_epsilon_normal"
+    ).shape == (0, 8)
+
+
+@pytest.mark.parametrize("mode", ["zero", "signed_epsilon_normal"])
+def test_mlp_weights_use_independent_output_rows_and_preserve_router(mode):
+    from types import SimpleNamespace
+
+    from mlp_weight_rounding import apply
+    from rounding_stats import normal_coefficient
+
+    w13 = torch.tensor(
+        [
+            [
+                [0.0, 1.0, -2.0, 3.0],
+                [0.0, 10.0, -20.0, 30.0],
+                [0.0, 100.0, -200.0, 300.0],
+                [0.0, 1000.0, -2000.0, 3000.0],
+            ]
+        ],
+        dtype=torch.bfloat16,
+    )
+    w2 = torch.tensor(
+        [[[1.0, -2.0], [10.0, -20.0], [100.0, -200.0], [1000.0, -2000.0]]],
+        dtype=torch.bfloat16,
+    )
+    router = torch.ones(1, 4)
+    experts = SimpleNamespace(w13_weight=w13, w2_weight=w2)
+    model = SimpleNamespace(
+        config=SimpleNamespace(num_experts=1, moe_intermediate_size=2, hidden_size=4),
+        model=SimpleNamespace(
+            layers=[SimpleNamespace(mlp=SimpleNamespace(experts=experts, gate=router))]
+        ),
+    )
+    original = w13.clone()
+    config = dict(quantile=0.5, replacement=mode, batch_rows=1)
+    report = apply(model, config)
+    eps = normal_coefficient(0.5) if mode != "zero" else 0
+    assert torch.equal(w13[0, :, 0], original[0, :, 0])
+    assert torch.equal(w13[0, :, 1], (original[0, :, 1].float() * eps).bfloat16())
+    assert torch.equal(w13[0, :, 2:], original[0, :, 2:])
+    assert router.eq(1).all()
+    assert [m["family"] for m in report["matrices"]] == [
+        "gate_proj",
+        "up_proj",
+        "down_proj",
+    ]
+    assert all(m["modified"] > 0 and m["mse"] > 0 for m in report["matrices"])
+
+
+def test_signed_epsilon_registry_inherits_benchmark_protocol_and_reaches_server():
+    rows = [
+        c
+        for c in run.experiment_configs
+        if c.get("round_activations_replacement") or c.get("mlp_weight_rounding")
+    ]
+    assert len(rows) == 42
+    assert {c["task"] for c in rows} == set(run.EPSILON_TASKS)
+    for row in rows:
+        prefix = row["name"].split("mlp_", 1)[0]
+        baseline = next(
+            c for c in run.experiment_configs if c["name"] == prefix + "baseline"
+        )
+        for key in ("model", "snapshot", "task", "chat_seed", "chat_concurrency"):
+            assert row[key] == baseline[key]
+        saved = run.CONFIG.copy()
+        try:
+            run.select(row["name"])
+            args = run.rounding_args()
+            actual = dict(
+                site="mlp",
+                epsilon=0,
+                quantile=row["round_activations_quantile"],
+                quantiles=None,
+                replacement=row.get("round_activations_replacement", "zero"),
+                mlp_weight_rounding=row.get("mlp_weight_rounding"),
+            )
+            assert not run.config_mismatch(actual)
+            if row.get("mlp_weight_rounding"):
+                assert (
+                    json.loads(args[args.index("--mlp-weight-rounding") + 1])
+                    == row["mlp_weight_rounding"]
+                )
+            else:
+                assert (
+                    args[args.index("--round-activations-replacement") + 1]
+                    == "signed_epsilon_normal"
+                )
+        finally:
+            run.CONFIG.clear()
+            run.CONFIG.update(saved)
+
+
+def test_signed_epsilon_sweep_reuses_controls_without_baselines():
+    rows = run_jobs.job_configs(signed_epsilon=True)
+    assert len(rows) == 56
+    assert len({row["name"] for row in rows}) == 56
+    assert all(
+        not row["name"].endswith(("baseline", "baseline_repeat")) for row in rows
+    )
+    assert {row["task"] for row in rows} == set(run.EPSILON_TASKS)
+    assert len(run_jobs.job_configs("chat_*", signed_epsilon=True)) == 8
+
+
+def test_signed_epsilon_stats_keep_selection_separate_from_zero_share(tmp_path):
+    path = tmp_path / "signed.sqlite"
+    with connect(path) as db:
+        db.execute(
+            "INSERT INTO requests VALUES (?, ?, ?, ?)",
+            ("r", "r", "[[8, 0, 2, 1, 1, 0, 4, 2]]", 0),
+        )
+    layer = read_stats(path, "mlp", 0, quantile=0.5)["layers"][0]
+    assert layer["newly_zeroed_floats"] == 0
+    assert layer["already_zero_floats"] == 2
+    assert layer["selected_floats"] == 4
+    assert layer["modified_floats"] == 2
+
+
+def test_signed_epsilon_preserves_nonfinite_values_without_spreading_them():
+    values = torch.tensor([[1.0, -2.0, float("inf"), float("nan")]])
+    threshold(values, 0, quantile=0.8, replacement="signed_epsilon_normal")
+    assert torch.isfinite(values[0, :2]).all()
+    assert values[0, 0] > 0 and values[0, 1] < 0
+    assert torch.isinf(values[0, 2]) and torch.isnan(values[0, 3])

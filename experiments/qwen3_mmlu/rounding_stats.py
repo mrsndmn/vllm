@@ -1,8 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
 """Thresholding and request-scoped counters for the local rounding experiment."""
 
 import json
 import math
 import sqlite3
+from statistics import NormalDist
 
 import torch
 
@@ -15,6 +19,19 @@ FIELDS = (
     "all_zero_tokens_after",
 )
 SITES = ("mlp", "block", "moe_out")
+REPLACEMENTS = ("zero", "signed_epsilon_normal")
+REPLACEMENT_FIELDS = FIELDS + ("selected_floats", "modified_floats")
+
+
+def normal_coefficient(quantile):
+    """Return the truncated-normal mean magnitude divided by its cutoff."""
+    validate_quantile(quantile)
+    if not quantile:
+        return 0.0
+    a = -NormalDist().inv_cdf((1 - quantile) / 2)
+    if not a:
+        return 0.5
+    return math.sqrt(2 / math.pi) * -math.expm1(-a * a / 2) / (quantile * a)
 
 
 def layer_operands(site, hidden, residual):
@@ -59,7 +76,7 @@ def group_quantile(schedule, layer, layers):
     return schedule[layer * len(schedule) // layers]
 
 
-def threshold(values, eps, residual=None, quantile=0.0):
+def threshold(values, eps, residual=None, quantile=0.0, replacement="zero"):
     """Modify selected values in place; return per-token int64 counters.
 
     ``values`` has one row per token, including all selected experts for MLPs.
@@ -69,7 +86,14 @@ def threshold(values, eps, residual=None, quantile=0.0):
     floor(q * width)-th smallest magnitude; ties at the cutoff are zeroed too.
     Epsilon and quantile zero are an exact no-op, including signed zeros and NaNs.
     """
+    if replacement not in REPLACEMENTS:
+        raise ValueError(f"Unknown replacement {replacement!r}")
+    signed = replacement == "signed_epsilon_normal"
+    if signed and (residual is not None or eps):
+        raise ValueError("Signed epsilon requires a quantile and no residual")
     observed = values.float()
+    if signed:
+        observed = observed.clone()
     if residual is not None:
         observed = observed + residual.float()
     zero = observed == 0
@@ -80,31 +104,45 @@ def threshold(values, eps, residual=None, quantile=0.0):
         cutoff = magnitude.kthvalue(rank, dim=1, keepdim=True).values
         # kthvalue ranks NaN last, so a NaN cutoff means every finite value is below it.
         limit = torch.where(cutoff.isnan(), torch.inf, cutoff)
+        if signed:
+            finite_max = torch.where(torch.isfinite(observed), magnitude, 0).amax(
+                dim=1, keepdim=True
+            )
+            limit = torch.where(torch.isfinite(cutoff), cutoff, finite_max)
     elif eps:
         magnitude = observed.abs()
         limit = min(eps, torch.finfo(torch.float32).max)
     else:
         limit = None
+    selected = torch.zeros_like(zero)
     if limit is None:
         mask = torch.zeros_like(zero)
     else:
-        mask = (magnitude <= limit) & ~zero & torch.isfinite(observed)
-        values.masked_fill_(mask, 0)
+        selected = (magnitude <= limit) & torch.isfinite(observed)
+        mask = selected & ~zero
+        if signed:
+            target = observed.sign() * limit * normal_coefficient(quantile)
+            values.copy_(torch.where(mask, target.to(values.dtype), values))
+        else:
+            values.masked_fill_(mask, 0)
         if residual is not None:
             residual.masked_fill_(mask, 0)
-    changed = mask.sum(dim=1, dtype=torch.int64)
-    existing = zero.sum(dim=1, dtype=torch.int64)
-    return torch.stack(
-        (
-            torch.full_like(changed, width),
-            changed,
-            existing,
-            torch.ones_like(changed),
-            (changed > 0).to(torch.int64),
-            (changed + existing == width).to(torch.int64),
-        ),
-        dim=1,
+    modified = (mask & (values.float() != observed) if signed else mask).sum(
+        dim=1, dtype=torch.int64
     )
+    changed = (mask & (values == 0)).sum(dim=1, dtype=torch.int64)
+    existing = zero.sum(dim=1, dtype=torch.int64)
+    counters = (
+        torch.full_like(changed, width),
+        changed,
+        existing,
+        torch.ones_like(changed),
+        (modified > 0).to(torch.int64),
+        (changed + existing == width).to(torch.int64),
+    )
+    if signed:
+        counters += (selected.sum(dim=1, dtype=torch.int64), modified)
+    return torch.stack(counters, dim=1)
 
 
 def connect(path):
@@ -122,7 +160,7 @@ def connect(path):
 def format_layers(counts):
     layers = []
     for index, row in enumerate(counts):
-        layer = dict(zip(FIELDS, row))
+        layer = dict(zip(REPLACEMENT_FIELDS, row))
         layer["layer"] = index
         layer["newly_zeroed_float_percent"] = 100 * row[1] / row[0] if row[0] else 0.0
         layer["affected_token_percent"] = 100 * row[4] / row[3] if row[3] else 0.0
@@ -142,7 +180,7 @@ def read_stats(path, site, eps, response_id=None, quantile=0.0, quantiles=None):
         for raw, cached in db.execute(sql, params):
             counts = json.loads(raw)
             if totals is None:
-                totals = [[0] * len(FIELDS) for _ in counts]
+                totals = [[0] * len(row) for row in counts]
             for total, row in zip(totals, counts):
                 for i, value in enumerate(row):
                     total[i] += value

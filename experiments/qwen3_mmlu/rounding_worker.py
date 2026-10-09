@@ -13,6 +13,8 @@ import regex as re
 import torch
 from rounding_stats import (
     FIELDS,
+    REPLACEMENT_FIELDS,
+    REPLACEMENTS,
     SITES,
     connect,
     group_quantile,
@@ -58,6 +60,14 @@ class RoundingWorker(Worker):
         self.site = os.environ["ROUND_ACTIVATIONS_SITE"]
         if self.site not in SITES:
             raise ValueError(f"Unknown rounding site {self.site!r}")
+        self.replacement = os.environ.get("ROUND_ACTIVATIONS_REPLACEMENT", "zero")
+        if self.replacement not in REPLACEMENTS:
+            raise ValueError("Unknown activation replacement")
+        if self.replacement != "zero" and (
+            self.site != "mlp" or self.eps or self.schedule
+        ):
+            raise ValueError("Signed epsilon supports uniform MLP quantiles only")
+        self.fields = FIELDS if self.replacement == "zero" else REPLACEMENT_FIELDS
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
         weight_config = os.environ.get("EMBEDDING_WEIGHT_ZEROING")
         if weight_config:
@@ -69,6 +79,16 @@ class RoundingWorker(Worker):
             )
             report_path.write_text(json.dumps(report, indent=2) + "\n")
             print("Embedding weight zeroing: " + json.dumps(report), flush=True)
+        mlp_config = os.environ.get("MLP_WEIGHT_ROUNDING")
+        if mlp_config:
+            from mlp_weight_rounding import apply
+
+            report = apply(model, json.loads(mlp_config))
+            report_path = Path(os.environ["ROUND_ACTIVATIONS_DB"]).with_suffix(
+                ".mlp-weights.json"
+            )
+            report_path.write_text(json.dumps(report, indent=2) + "\n")
+            print(f"MLP weight replacement report: {report_path}", flush=True)
         self.active_counts = {}
         self.batch_ids = []
         self.batch_sizes = []
@@ -115,7 +135,7 @@ class RoundingWorker(Worker):
                         int(runner.input_batch.num_computed_tokens_cpu[i]),
                         int(runner.input_batch.num_prompt_tokens[i]),
                     )
-                    counts = np.zeros((self.layers, len(FIELDS)), dtype=np.int64)
+                    counts = np.zeros((self.layers, len(self.fields)), dtype=np.int64)
                     self.active_counts[rid] = (counts, skipped)
             return result
 
@@ -142,7 +162,7 @@ class RoundingWorker(Worker):
         quantile = self.quantile
         if self.schedule:
             quantile = group_quantile(self.schedule, layer, self.layers)
-        counts = threshold(values, self.eps, residual, quantile)
+        counts = threshold(values, self.eps, residual, quantile, self.replacement)
         if self.executing:
             expected = sum(self.batch_sizes)
             if counts.shape[0] != expected or layer in self.layer_counts:

@@ -15,6 +15,15 @@ the `prof_*` re-scoring of `chat_baseline`'s generated responses.
 
 ## Usage arms
 
+- Signed epsilon MLP experiments: registry rows containing `mlp_signed_epsilon`
+  or `mlp_weights_` run through `run_jobs.py --signed-epsilon-sweep` / `run.py job`.
+  `rounding_stats.py` replaces routed activations; `mlp_weight_rounding.py`
+  replaces loaded expert gate/up/down rows before warmup. The wrapper/API expose
+  the requested replacement mode and a separate MLP weight report. Signed
+  activation counters distinguish selection/modification from new zeros;
+  summaries preserve replacement metadata. See `SIGNED_EPSILON.md` in the
+  experiment directory. Existing zeroing arms and baselines are reused.
+
 - `chat_eval.py summarize` and `benchmark_eval.py summarize` always save a PNG
   heatmap beside their JSON/CSV summaries and refresh `benchmarks-heatmap.png`.
   `metrics_heatmap.py [--filter GLOB]` regenerates the combined heatmap from
