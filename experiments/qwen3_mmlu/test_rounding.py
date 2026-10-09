@@ -2780,3 +2780,24 @@ def test_signed_epsilon_preserves_nonfinite_values_without_spreading_them():
     assert torch.isfinite(values[0, :2]).all()
     assert values[0, 0] > 0 and values[0, 1] < 0
     assert torch.isinf(values[0, 2]) and torch.isnan(values[0, 3])
+
+
+def test_weight_only_live_validation_skips_original_parity_and_keeps_unique_paths():
+    import validate_live
+
+    baseline = dict(site="mlp", epsilon=0.0, quantile=0.0)
+    paths = {validate_live.validation_path(baseline)}
+    assert not validate_live.model_modified(baseline)
+    for replacement, q in itertools.product(
+        ("zero", "signed_epsilon_normal"), (0.25, 0.5)
+    ):
+        config = dict(
+            baseline,
+            mlp_weight_rounding=dict(
+                replacement=replacement, quantile=q, batch_rows=256
+            ),
+        )
+        assert not validate_live.zeroing(config)
+        assert validate_live.model_modified(config)
+        paths.add(validate_live.validation_path(config))
+    assert len(paths) == 5

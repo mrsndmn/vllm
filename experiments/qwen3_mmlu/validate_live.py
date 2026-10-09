@@ -36,6 +36,30 @@ def zeroing(config):
     return config["epsilon"] > 0 or config.get("quantile", 0) > 0 or any(schedule)
 
 
+def model_modified(config):
+    return zeroing(config) or any(
+        config.get(key, {}).get("quantile", 0) > 0
+        for key in ("weight_zeroing", "mlp_weight_rounding")
+    )
+
+
+def validation_path(config):
+    strength = str(config["epsilon"])
+    if config.get("quantile"):
+        strength = f"q{config['quantile']}"
+    if config.get("quantiles"):
+        strength = "s" + "_".join(map(str, config["quantiles"]))
+    if config.get("replacement", "zero") != "zero":
+        strength += "-" + config["replacement"]
+    if config.get("mlp_weight_rounding"):
+        weights = config["mlp_weight_rounding"]
+        strength += f"-mlp-weights-{weights['replacement']}-q{weights['quantile']:g}"
+    if config.get("weight_zeroing"):
+        weights = config["weight_zeroing"]
+        strength += f"-weights-{weights['scope']}-q{weights['quantile']:g}"
+    return ARTIFACTS / f"validation-{config['site']}-{strength}.json"
+
+
 def check_counts(response, config):
     stats = response["rounding_statistics"]
     layers = stats["layers"]
@@ -96,7 +120,7 @@ def main():
     config = get_json("/rounding/config")
     for response in responses:
         check_counts(response, config)
-    if not zeroing(config):
+    if not model_modified(config):
         original = json.loads(REFERENCE.read_text())
         assert [signature(r) for r in original] == [signature(r) for r in responses]
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
@@ -142,14 +166,7 @@ def main():
         "chat": chat,
         "stream_statistics": json.loads(events[-2]),
     }
-    strength = config["epsilon"]
-    if config.get("quantile"):
-        strength = f"q{config['quantile']}"
-    if config.get("quantiles"):
-        strength = "s" + "_".join(map(str, config["quantiles"]))
-    if config.get("replacement", "zero") != "zero":
-        strength += "-" + config["replacement"]
-    path = ARTIFACTS / f"validation-{config['site']}-{strength}.json"
+    path = validation_path(config)
     path.write_text(json.dumps(result, indent=2))
     print(f"Live checks passed: {path}")
 
