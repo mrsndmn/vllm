@@ -1,0 +1,68 @@
+\section{Joint activation and weight zeroing}
+\label{sec:joint-zeroing}
+We evaluated three combinations on Qwen3-30B-A3B-Instruct-2507 using the same
+benchmark-specific generation and grading protocols as the unmodified baseline.
+The activation-only arm targets the smallest 50\% of MLP intermediate values
+and 25\% of block residual-stream values by magnitude. The weight-only arm
+targets the smallest 70\% of input embedding weights and 25\% of both expert
+MLP and attention projection weights by magnitude. The third arm
+applies both combinations. Their registry names are
+\texttt{joint\_activations}, \texttt{joint\_weights}, and \texttt{joint\_all};
+\texttt{run.py:JOINT\_ARMS} specifies the intervention strengths and selected
+matrices. Weight selection is independent within each output row; activation
+selection is per executed token at each selected site. We apply these changes
+without fine-tuning. The expert router, output head, and normalization parameters
+are preserved.
+
+All 30 full evaluations completed. Before interpreting the scores, we verified
+saved configurations, identical baseline question sets and prompts, dataset
+manifests, and metrics recomputed from saved samples. Per-site counters confirm
+both activation interventions in all 48 layers. Per-matrix reports confirm the
+requested weight transformation on the input embedding, 18,432 expert projection
+matrices, and 192 attention projection matrices. MMLU-Pro is outside this series.
+The question counts are 304 for MMLU STEM, 1,319 for GSM8K, 500 for MATH500,
+541 for IFEval, 198 for GPQA Diamond, 164 for HumanEval+, 378 for MBPP+, and
+1,300 for each RULER context length.
+
+\begin{table}[ht]
+\centering
+\caption{Joint-zeroing benchmark scores (\%). IFEval uses strict prompt accuracy;
+HumanEval+ and MBPP+ use pass@1 on the extended tests. RULER reports mean
+sample scores, including partial credit. Each column uses its own baseline.}
+\label{tab:joint-zeroing}
+\input{tables/manual/joint_zeroing}
+\end{table}
+
+Table~\ref{tab:joint-zeroing} shows task-dependent interactions.
+Combining activations preserved MATH500 (89.60\% versus 89.20\% baseline) and
+scored 47.98\% on GPQA (44.95\% baseline), but reduced HumanEval+ to 78.66\%
+from 86.59\%. The individual MLP and block activation interventions had scored
+89.63\% and 85.37\% on HumanEval+, respectively: the joint loss was absent
+from either individual intervention in those runs.
+
+Combining weights reduced MATH500 to 84.20\% and GPQA to 37.37\%, below each
+individual weight intervention. The individual embedding, MLP, and attention
+arms scored 87.00\%, 87.60\%, and 86.60\% on MATH500 and 44.44\%, 44.44\%,
+and 42.42\% on GPQA. Adding joint activation zeroing to the joint weight arm
+partly recovered these scores to 86.20\% and 40.91\%, while reducing HumanEval+
+from 87.80\% to 79.88\%. Thus the measured effects do not add uniformly across
+benchmarks. All three combinations stayed within 0.63 percentage points of their
+RULER baselines, and the full combination matched baseline IFEval at 83.55\%.
+
+These are single-run comparisons. The baseline repeat increased HumanEval+ by
+2.44 percentage points and GPQA by 1.52 points, so apparent improvements require
+replicated evaluation before being interpreted as reliable gains. The serving
+implementation uses dense kernels; these quality results do not demonstrate a
+speedup or memory reduction.
+
+\paragraph{Result provenance.}
+{\raggedright
+The jobs used the committed source snapshot
+\texttt{7831187ddf61f01f9af01d76e26e786528b64372}.
+The external experiment artifact directory's \texttt{joint-zeroing/} contains
+\path{full-manifest.json} with complete job identifiers,
+\path{full-validation.json}, \path{full-summary.json},
+\path{full-summary.csv}, and \path{individual-comparisons.json}.
+These record all completed evaluations and the individual-arm comparisons used
+above. The table transcribes the validated summary, rounded to two decimal places.
+\par}

@@ -2,7 +2,10 @@
 
 This directory follows `../compression_horizon`'s paper workflow: LaTeX sources,
 separate generated tables, `latexmk` output under `build/`, and lint before build.
-The current manuscript is a workload-analysis draft, not a completed accuracy paper.
+The manuscript reports baseline workload statistics and completed joint-zeroing
+quality results. `sections/joint-zeroing.tex` discusses all thirty full evaluations;
+`tables/manual/joint_zeroing.tex` transcribes their validated summary. Result
+provenance and single-run limitations are documented in that section.
 
 - Edit prose in `article.tex`, `sections/`, and `appendix.tex`.
 - Edit generated table logic in `../scripts/paper/token_lengths.py`, then run

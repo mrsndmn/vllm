@@ -14,8 +14,12 @@ This working draft introduces the evaluation workload for experiments on
 activation and weight zeroing. We report input and output text lengths from
 completed unmodified baseline runs and their repeats. These descriptive
 statistics characterize the workload; they do not establish speedups or the
-accuracy effects of zeroing.
+accuracy effects of zeroing. We also report thirty completed evaluations of
+joint activation zeroing, joint weight zeroing, and their combination. The
+combinations show task-dependent quality changes, including losses on code
+generation and reasoning alongside largely preserved long-context retrieval.
 \end{abstract}
 \input{sections/workload}
+\input{sections/joint-zeroing}
 \input{appendix}
 \end{document}
