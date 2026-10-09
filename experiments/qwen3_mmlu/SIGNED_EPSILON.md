@@ -25,7 +25,7 @@ by -0.33 and +0.66 points. All runs used the same 304 questions, with no unparse
 answers. The baseline scored 92.76%. Exact paired tests do not reject equal accuracy
 at the 0.05 level (the largest weight gain has p=0.0636, without multiplicity
 correction). Detailed results and paired comparisons are saved with the sweep's
-external artifacts. Other benchmark wait groups continue independently.
+external artifacts.
 GSM8K also completed, with matching prompts/answers for all 1,319 questions and
 recomputed result aggregates verified. The baseline scored 95.15%. Signed
 activations gained 0.23 and 0.99 points against zero controls; signed expert
@@ -83,22 +83,39 @@ The activation gain has unadjusted p=0.0488 and does not survive correction. Res
 reflect both answer correctness and completion/parsing behavior under the existing
 protocol. Full metrics and paired/decomposition results are saved externally; the
 heatmap includes six completed benchmarks.
-Completed baseline and activation-zeroing controls are reused.
+MBPP+ completed with all 378 tasks, matching source configs, manifests,
+question content and prompts. Saved metric aggregates and the base/plus pass
+conditions were verified without rerunning generated code. The baseline scored
+75.66% pass@1 on both base and extended tests. Signed activations changed accuracy
+by +1.59 and +0.53 points against zero controls; signed expert weights by -0.79 and
++1.85 points. The larger weight gain was 19 fixed versus 12 broken tasks (exact
+paired p=0.281). Truncated outputs dropped from five to zero, but all seven net
+additional passes came from pairs where neither output was truncated. No primary
+pair reaches unadjusted 0.05 significance on this benchmark.
+All 42 newly submitted jobs completed successfully; completed baseline and
+activation-zeroing controls were reused. The final external summaries cover all
+seven benchmarks and all 28 paired primary comparisons, including Bonferroni
+adjustments. Only the larger weight gains on IFEval and MATH-500 survive that
+correction. The final combined heatmap and per-benchmark CSVs are saved externally
+and copied to the local run artifacts.
 
 ## Conclusions
 
-The stronger tested weight transformation benefits from signed replacement on
-all six completed benchmarks under the existing end-to-end evaluation protocol.
-The large IFEval and MATH-500 gains involve fewer truncated outputs. MATH-500 does
-not show a net improvement among pairs where both outputs finish within budget,
-so its result does not establish better answer correctness independent of budget.
-HumanEval+ also favors signed replacement of the stronger weight transformation
-among pairs without truncation, although its paired evidence is not significant.
-GPQA also shows fewer truncated/unparsed outputs alongside its larger weight gain;
-its paired gain is not significant after correction over the whole planned sweep.
+Signed replacement of the stronger tested weight transformation beats matching
+zero controls on all seven benchmarks, with gains from 1.44 to 11.62 percentage
+points under the existing end-to-end evaluation protocol. The IFEval and MATH-500
+paired gains survive correction over all 28 planned primary comparisons. Their
+large gains involve fewer truncated outputs: MATH-500 has no net improvement
+among pairs where both outputs finish within budget, so this result does not
+establish better answer correctness independent of budget. GPQA likewise combines
+fewer truncated/unparsed outputs with improved accuracy; its gain does not survive
+the full-sweep correction. HumanEval+ and MBPP+ have positive stronger-weight gains
+among pairs without truncation, but their paired evidence is not significant.
 The lighter weight transformation and both activation variants vary by benchmark.
-Wait for the remaining benchmark and account for multiple comparisons. Tensor MSE
-improvements do not guarantee improvements in model accuracy.
+Tensor MSE improvements therefore do not guarantee improvements in model accuracy,
+and signed replacement is not a universal improvement across the tested settings.
+A useful follow-up would repeat the stronger-weight comparison with multiple seeds
+and a larger generation budget to assess stability and completion effects.
 
 ## Changelog
 
@@ -117,3 +134,5 @@ improvements do not guarantee improvements in model accuracy.
   base/plus outcomes, recorded paired comparisons, and refreshed the five-benchmark heatmap.
 - 2026-10-09: All GPQA Diamond jobs completed; validated provenance, parsing
   and metrics, recorded paired comparisons, and refreshed the six-benchmark heatmap.
+- 2026-10-09: All MBPP+ jobs completed; validated provenance and saved base/plus
+  outcomes, finalized seven-benchmark results and all 28 paired comparisons.
