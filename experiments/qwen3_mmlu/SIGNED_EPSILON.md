@@ -17,7 +17,10 @@ Compare against matching existing zeroing arms and benchmark baselines.
 
 ## Results
 
-Pending validation and MLSpace evaluation.
+The full local test suite passed, as did generative activation and expert-weight
+smokes on the real model. Independent adversarial review approved the implementation.
+The benchmark sweep has been submitted to MLSpace; full quality results are pending.
+Completed baseline and activation-zeroing controls are reused.
 
 ## Conclusions
 
@@ -26,3 +29,5 @@ Pending. Tensor MSE improvements do not guarantee improvements in model accuracy
 ## Changelog
 
 - 2026-10-09: Added signed epsilon activation and expert-weight evaluation arms.
+- 2026-10-09: Completed preflight and independent review; submitted the sweep
+  and registered durable observation separately for each benchmark.
