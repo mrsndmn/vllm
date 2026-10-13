@@ -19,7 +19,7 @@ select,input { padding:5px 7px; border:1px solid #c9c8c3; border-radius:4px;
 input { width:180px; } .check { flex-direction:row; align-items:center; padding-bottom:5px; }
 .check input { width:auto; } #error { color:#b3261e; min-height:18px; }
 .grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
-.plot { min-width:0; overflow:auto; } #overview,#experts { min-height:420px; }
+.plot { min-width:0; overflow:auto; } #overview,#experts,#norm-heatmap { min-height:420px; }
 #histogram,#comparison { min-height:340px; }
 .facts { display:flex; flex-wrap:wrap; gap:8px 24px; padding:12px 0; border-top:1px solid var(--line); }
 .fact { min-width:140px; font-size:12px; } .fact b { display:block; font-size:16px; }
@@ -128,6 +128,8 @@ function drawNorm(layers) {
   if(!norm) return;
   const rows=new Map(norm.layers.map((l,i)=>[l,i]));
   const raw=layers.map(l=>rows.has(l)?Array.from(norm.values.subarray(rows.get(l)*norm.width,(rows.get(l)+1)*norm.width)):Array(norm.width).fill(null));
+  const height=Math.max(420,Math.min(850,layers.length*18+140));
+  $('norm-heatmap').style.height=`${height}px`;
   $('norm-note').textContent=`${family} · D = ${norm.width}, L = ${layers.length} · actual signed scale weights (FP32), shared colour scale; gaps mean missing tensors. Final norm and norms of other widths are excluded.`;
   return Plotly.react('norm-heatmap',[{type:'heatmap',
     x:Array.from({length:norm.width},(_,d)=>d),y:layers,z:raw,
@@ -135,7 +137,7 @@ function drawNorm(layers) {
     hoverongaps:false,
     hovertemplate:'Layer %{y} · dimension %{x}<br>weight: %{z:.6g}<extra></extra>',
     colorbar:{title:{text:'weight'},len:.85}}],
-    {...STYLE,height:Math.max(420,Math.min(850,layers.length*18+140)),
+    {...STYLE,height,
       xaxis:{title:{text:'Hidden dimension (0-based)'}},
       yaxis:{title:{text:'Decoder layer (0-based)'},autorange:'reversed',dtick:1}},PLOT_CONFIG);
 }
