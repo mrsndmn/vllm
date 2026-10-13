@@ -53,7 +53,13 @@ summary { cursor:pointer; color:var(--text); } code { font-family:ui-monospace,m
 </div>
 <section class="plot" id="norm-section">
   <h2>LayerNorm / RMSNorm weights · hidden dimension × layers</h2>
-  <div class="controls"><label>Normalization <select id="norm-family"></select></label></div>
+  <div class="controls">
+    <label>Normalization <select id="norm-family"></select></label>
+    <label>Weight scale <select id="norm-scale">
+      <option value="relative">Relative: weight / layer weight RMS</option>
+      <option value="raw">Original weight</option>
+    </select></label>
+  </div>
   <div class="note" id="norm-note"></div><div id="norm-heatmap"></div>
 </section>
 <details open><summary>What these numbers mean</summary>
@@ -113,6 +119,12 @@ function colour(value, signed, logarithmic) {
   if (!logarithmic) return value;
   return signed ? Math.sign(value)*Math.log10(1+Math.abs(value)) : Math.log10(Math.max(value,1e-12));
 }
+function normRow(row, relative) {
+  if(!relative) return row.slice();
+  const values=row.filter(v=>v!==null && Number.isFinite(v));
+  const rms=Math.sqrt(values.reduce((sum,v)=>sum+v*v,0)/values.length);
+  return row.map(v=>v===null || !Number.isFinite(v) || !(rms>0)?null:v/rms);
+}
 </script>
 <script id="payload" type="application/octet-stream">%%DATA%%</script>
 <script>
@@ -128,15 +140,20 @@ function drawNorm(layers) {
   if(!norm) return;
   const rows=new Map(norm.layers.map((l,i)=>[l,i]));
   const raw=layers.map(l=>rows.has(l)?Array.from(norm.values.subarray(rows.get(l)*norm.width,(rows.get(l)+1)*norm.width)):Array(norm.width).fill(null));
+  const relative=$('norm-scale').value==='relative';
+  const z=raw.map(row=>normRow(row,relative));
+  const title=relative?'weight / RMS':'weight';
   const height=Math.max(420,Math.min(850,layers.length*18+140));
   $('norm-heatmap').style.height=`${height}px`;
-  $('norm-note').textContent=`${family} · D = ${norm.width}, L = ${layers.length} · actual signed scale weights (FP32), shared colour scale; gaps mean missing tensors. Final norm and norms of other widths are excluded.`;
+  $('norm-note').textContent=`${family} · D = ${norm.width}, L = ${layers.length} · `+
+    (relative?'Signed weight / √mean(weight²), computed independently over all D coordinates of each layer and normalization; |1| equals that row’s weight RMS. Zero-RMS rows are blank. ':'Original signed scale weights (FP32). ')+
+    'Shared colour scale; gaps mean missing tensors. Final norm and norms of other widths are excluded.';
   return Plotly.react('norm-heatmap',[{type:'heatmap',
-    x:Array.from({length:norm.width},(_,d)=>d),y:layers,z:raw,
+    x:Array.from({length:norm.width},(_,d)=>d),y:layers,z,customdata:raw,
     colorscale:'RdBu',reversescale:true,zmid:0,
     hoverongaps:false,
-    hovertemplate:'Layer %{y} · dimension %{x}<br>weight: %{z:.6g}<extra></extra>',
-    colorbar:{title:{text:'weight'},len:.85}}],
+    hovertemplate:`Layer %{y} · dimension %{x}<br>${title}: %{z:.6g}<br>Original weight: %{customdata:.6g}<extra></extra>`,
+    colorbar:{title:{text:title},len:.85}}],
     {...STYLE,height,
       xaxis:{title:{text:'Hidden dimension (0-based)'}},
       yaxis:{title:{text:'Decoder layer (0-based)'},autorange:'reversed',dtick:1}},PLOT_CONFIG);
@@ -259,7 +276,7 @@ async function boot() {
     if(backends.length) $('analysis-note').textContent+=` Computed on: ${backends.join('; ')}${backends.length>1?' (mixed shard backends)':''}. Per-shard code fingerprints are embedded in the report.`;
     const excluded=DATA.provenance.excluded_checkpoint_buffers||[];
     if(excluded.length) $('analysis-note').textContent+=` ${excluded.length} non-parameter checkpoint buffers excluded (listed in embedded provenance).`;
-    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour','norm-family']) {
+    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour','norm-family','norm-scale']) {
       $(id).addEventListener('change',()=>{
         if(id==='family') {
           const global=DATA.records.find(r=>r[3]===$('family').value)?.[1]===-1;

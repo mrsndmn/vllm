@@ -553,6 +553,11 @@ console.log(JSON.stringify({
   pooled: pooled([0,1], [1,2,3,4], 2),
   linear: linearPoints([1,2,3,4], 1),
   log: logPoints([1,2,3], [.1, 1]),
+  norm: normRow([3,-4,0],true),
+  normScaled: normRow([30,-40,0],true),
+  normRaw: normRow([3,-4,0],false),
+  normZero: normRow([0,0],true),
+  normMissing: normRow([null,null],true),
 }));
 """
     )
@@ -568,6 +573,12 @@ console.log(JSON.stringify({
     assert result["linear"][-1]["hi"] is None
     assert result["log"][0]["lo"] == 0
     assert result["log"][-1]["hi"] is None
+    assert result["norm"] == pytest.approx(
+        [3 * math.sqrt(3) / 5, -4 * math.sqrt(3) / 5, 0]
+    )
+    assert result["normScaled"] == pytest.approx(result["norm"])
+    assert result["normRaw"] == [3, -4, 0]
+    assert result["normZero"] == result["normMissing"] == [None, None]
 
 
 def test_threshold_counts_new_zeros_and_affected_tokens():

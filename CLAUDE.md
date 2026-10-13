@@ -159,7 +159,8 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   `--render-only` requires all shard caches. The HTML supports layer/family/expert
   selection, metric maps, pooled expert distributions and layer comparison.
   Rendering also reads hidden-width decoder norm scales on CPU for one D × L
-  heatmap with a norm-family selector and the overview layer filter.
+  heatmap with a norm-family selector and the overview layer filter; its scale
+  selector switches original weights and signed weights / each row's weight RMS.
   Configuration is in the script's `experiment_configs`; approximate quantiles
   and stable rank are labelled. The actual HTML byte limit is enforced before
   replacing the output. Unit and Node helper checks extend `test_rounding.py`.
