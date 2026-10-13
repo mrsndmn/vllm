@@ -470,6 +470,42 @@ def test_weight_single_file_checkpoint_covers_dense_layers_and_global_weights(tm
     assert list(analysis) == ["model.safetensors"]
 
 
+@pytest.mark.parametrize("indexed", [False, True])
+def test_norm_heatmap_preserves_coordinates_and_excludes_other_widths(
+    tmp_path, indexed
+):
+    import pybase64 as base64
+    from safetensors.torch import save_file
+
+    weights = {
+        "model.layers.2.input_layernorm.weight": torch.tensor([3.0, -2.0, 0.0]),
+        "model.layers.0.input_layernorm.weight": torch.tensor([1.0, 0.5, -1.0]),
+        "model.layers.0.post_attention_layernorm.weight": torch.ones(3),
+        "model.layers.0.input_layernorm.bias": torch.zeros(3),
+        "model.layers.0.self_attn.q_norm.weight": torch.ones(2),
+        "model.norm.weight": torch.ones(3),
+    }
+    save_file(weights, tmp_path / "model.safetensors")
+    if indexed:
+        (tmp_path / "model.safetensors.index.json").write_text(
+            json.dumps({"weight_map": {n: "model.safetensors" for n in weights}})
+        )
+    (tmp_path / "config.json").write_text(json.dumps({"hidden_size": 3}))
+    records = [
+        [n, *weight_viz.identity(n), list(w.shape), 4.0] for n, w in weights.items()
+    ]
+    norms = weight_viz.norm_weights(
+        records, dict(weight_viz.CONFIG, snapshot=str(tmp_path))
+    )
+    assert set(norms) == {"input_layernorm", "post_attention_layernorm"}
+    norm = norms["input_layernorm"]
+    assert norm["layers"] == [0, 2] and norm["width"] == 3
+    values = torch.frombuffer(
+        bytearray(base64.b64decode(norm["values"])), dtype=torch.float32
+    )
+    assert values.reshape(2, 3).tolist() == [[1.0, 0.5, -1.0], [3.0, -2.0, 0.0]]
+
+
 def test_weight_report_embeds_offline_data_and_enforces_actual_byte_limit():
     import gzip
 

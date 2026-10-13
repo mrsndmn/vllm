@@ -51,6 +51,11 @@ summary { cursor:pointer; color:var(--text); } code { font-family:ui-monospace,m
   <section class="plot"><h2>Selected weights</h2><div class="note" id="hist-note"></div><div id="histogram"></div></section>
   <section class="plot"><h2>Layer comparison</h2><div class="note" id="compare-note"></div><div id="comparison"></div></section>
 </div>
+<section class="plot" id="norm-section">
+  <h2>LayerNorm / RMSNorm weights · hidden dimension × layers</h2>
+  <div class="controls"><label>Normalization <select id="norm-family"></select></label></div>
+  <div class="note" id="norm-note"></div><div id="norm-heatmap"></div>
+</section>
 <details open><summary>What these numbers mean</summary>
 <p>This report describes checkpoint parameters, independent of prompts and tokens. Layer indices are zero-based decoder indices. Global tensors are embedding, output head and final norm. Expert weights are shown before routing; all experts are represented.</p>
 <p>Moments and histogram counts use every weight in FP32. <code>std</code> is population standard deviation; RMS = √mean(w²); Frobenius = √Σw²; excess kurtosis = mean((w−mean)⁴)/std⁴−3 (undefined for constant weights). Row/column norm CV is population std of L2 norms divided by their mean.</p>
@@ -117,7 +122,23 @@ const fmt = v => v===null || !Number.isFinite(v) ? '—' : Number(v.toPrecision(
 const option = (value,label) => { const o=document.createElement('option'); o.value=value; o.textContent=label; return o; };
 const STYLE = {paper_bgcolor:'#fcfcfb',plot_bgcolor:'#fcfcfb',font:{family:'system-ui',size:11},margin:{l:70,r:25,t:20,b:90}};
 const PLOT_CONFIG = {responsive:true,displaylogo:false};
-let DATA, VALUES, LINEAR, LOG, families, layerCount, expertCount, index;
+let DATA, VALUES, LINEAR, LOG, families, layerCount, expertCount, index, NORMS;
+function drawNorm(layers) {
+  const family=$('norm-family').value, norm=NORMS[family];
+  if(!norm) return;
+  const rows=new Map(norm.layers.map((l,i)=>[l,i]));
+  const raw=layers.map(l=>rows.has(l)?Array.from(norm.values.subarray(rows.get(l)*norm.width,(rows.get(l)+1)*norm.width)):Array(norm.width).fill(null));
+  $('norm-note').textContent=`${family} · D = ${norm.width}, L = ${layers.length} · actual signed scale weights (FP32), shared colour scale; gaps mean missing tensors. Final norm and norms of other widths are excluded.`;
+  return Plotly.react('norm-heatmap',[{type:'heatmap',
+    x:Array.from({length:norm.width},(_,d)=>d),y:layers,z:raw,
+    colorscale:'RdBu',reversescale:true,zmid:0,
+    hoverongaps:false,
+    hovertemplate:'Layer %{y} · dimension %{x}<br>weight: %{z:.6g}<extra></extra>',
+    colorbar:{title:{text:'weight'},len:.85}}],
+    {...STYLE,height:Math.max(420,Math.min(850,layers.length*18+140)),
+      xaxis:{title:{text:'Hidden dimension (0-based)'}},
+      yaxis:{title:{text:'Decoder layer (0-based)'},autorange:'reversed',dtick:1}},PLOT_CONFIG);
+}
 function idsAt(layer,family,expert=-1) {
   const ids=index.get(`${layer}|${family}`)||[];
   return expert<0?ids:ids.filter(id=>DATA.records[id][2]===expert);
@@ -168,7 +189,7 @@ async function draw() {
     const column=DATA.stat_names.indexOf($('metric').value), selected=idsAt(layer,family,expert);
     $('expert').disabled=!family.startsWith('expert.');
     const viewLayers=[-1,...layers], raw=viewLayers.map(l=>families.map(f=>statsFor(idsAt(l,f),column)));
-    const jobs=[heatmap('overview',families,viewLayers.map(l=>l<0?'Global':`Layer ${l}`),raw,$('metric').value)];
+    const jobs=[heatmap('overview',families,viewLayers.map(l=>l<0?'Global':`Layer ${l}`),raw,$('metric').value),drawNorm(layers)];
     if(family.startsWith('expert.')) {
       $('expert-note').textContent=`${family}: individual expert matrices (click to select)`;
       jobs.push(heatmap('experts',Array.from({length:expertCount},(_,e)=>e),layers.map(l=>`Layer ${l}`),
@@ -203,6 +224,12 @@ async function boot() {
     const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
     DATA=JSON.parse(await new Response(stream).text());
     VALUES=decode(DATA.stats,Float32Array); LINEAR=decode(DATA.linear,Uint32Array); LOG=decode(DATA.log,Uint32Array);
+    NORMS=DATA.norm_weights||{};
+    for(const [family,norm] of Object.entries(NORMS)) {
+      norm.values=decode(norm.values,Float32Array);
+      $('norm-family').append(option(family,family));
+    }
+    $('norm-section').hidden=!Object.keys(NORMS).length;
     families=[...new Set(DATA.records.map(r=>r[3]))].sort();
     layerCount=1+Math.max(...DATA.records.map(r=>r[1])); expertCount=1+Math.max(...DATA.records.map(r=>r[2]));
     index=new Map();DATA.records.forEach((r,id)=>{const key=`${r[1]}|${r[3]}`; if(!index.has(key))index.set(key,[]);index.get(key).push(id);});
@@ -230,7 +257,7 @@ async function boot() {
     if(backends.length) $('analysis-note').textContent+=` Computed on: ${backends.join('; ')}${backends.length>1?' (mixed shard backends)':''}. Per-shard code fingerprints are embedded in the report.`;
     const excluded=DATA.provenance.excluded_checkpoint_buffers||[];
     if(excluded.length) $('analysis-note').textContent+=` ${excluded.length} non-parameter checkpoint buffers excluded (listed in embedded provenance).`;
-    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour']) {
+    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour','norm-family']) {
       $(id).addEventListener('change',()=>{
         if(id==='family') {
           const global=DATA.records.find(r=>r[3]===$('family').value)?.[1]===-1;

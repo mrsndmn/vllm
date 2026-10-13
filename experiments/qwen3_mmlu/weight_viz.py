@@ -334,6 +334,45 @@ def encode(array, dtype):
     return base64.b64encode(np.ascontiguousarray(array, dtype=dtype).tobytes()).decode()
 
 
+def norm_weights(records, config):
+    """Read decoder normalization scales at the model's hidden width on CPU."""
+    candidates = [
+        r
+        for r in records
+        if r[1] >= 0
+        and r[2] == -1
+        and len(r[4]) == 1
+        and "norm" in r[3]
+        and r[0].endswith(".weight")
+    ]
+    if not candidates:
+        return {}
+    snapshot = Path(config["snapshot"])
+    model_config = json.loads((snapshot / "config.json").read_text())
+    hidden_size = model_config.get("text_config", model_config)["hidden_size"]
+    weights = parameter_map(config)
+    shards = defaultdict(list)
+    for record in candidates:
+        if record[4] == [hidden_size]:
+            shards[weights[record[0]]].append(record)
+    families = defaultdict(dict)
+    for shard, rows in shards.items():
+        with safe_open(snapshot / shard, framework="pt", device="cpu") as handle:
+            for name, layer, _, family, _, _ in rows:
+                vector = handle.get_tensor(name).float().numpy()
+                if not np.isfinite(vector).all():
+                    raise ValueError(f"Non-finite normalization weights: {name}")
+                families[family][layer] = vector
+    return {
+        family: {
+            "layers": sorted(rows),
+            "width": hidden_size,
+            "values": encode(np.stack([rows[layer] for layer in sorted(rows)]), "<f4"),
+        }
+        for family, rows in sorted(families.items())
+    }
+
+
 def render(records, stats, linear, log, config, provenance):
     """Embed Plotly and gzipped data; enforce the limit on actual UTF-8 bytes."""
     from plotly.offline import get_plotlyjs
@@ -346,6 +385,7 @@ def render(records, stats, linear, log, config, provenance):
         "stats": encode(stats, "<f4"),
         "linear": encode(linear, "<u4"),
         "log": encode(log, "<u4"),
+        "norm_weights": norm_weights(records, config),
     }
     if max(linear.max(), log.max()) > np.iinfo(np.uint32).max:
         raise ValueError("Histogram count exceeds uint32")
