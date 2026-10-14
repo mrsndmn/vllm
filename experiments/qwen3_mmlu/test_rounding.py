@@ -686,28 +686,26 @@ def test_normkeep_registry_pairs_protocols_and_checks_served_mask(monkeypatch):
     rows = [
         c for c in run.experiment_configs if c["name"].startswith("normkeep_preview_")
     ]
-    assert len(rows) == 4
+    assert len(rows) == 10
     for task in ("mmlu", "gsm8k"):
         baseline = next(
             c for c in rows if c["name"] == f"normkeep_preview_{task}_baseline"
         )
-        masked = next(
-            c for c in rows if c["name"] == f"normkeep_preview_{task}_keep604"
-        )
-        assert {k: v for k, v in baseline.items() if k != "name"} == {
-            k: v for k, v in masked.items() if k not in ("name", "post_norm_channels")
-        }
-        monkeypatch.setattr(run, "CONFIG", dict(masked))
-        cmd = run.rounding_args()
-        assert (
-            json.loads(cmd[cmd.index("--post-norm-channels") + 1])
-            == run.NORM_CHANNEL_MASK
-        )
-        actual = dict(site="mlp", epsilon=0.0, quantile=0.0)
-        assert run.config_mismatch(actual)
-        assert not run.config_mismatch(
-            dict(actual, post_norm_channels=run.NORM_CHANNEL_MASK)
-        )
+        for kept, mask in run.NORM_CHANNEL_MASKS.items():
+            masked = next(
+                c for c in rows if c["name"] == f"normkeep_preview_{task}_keep{kept}"
+            )
+            assert {k: v for k, v in baseline.items() if k != "name"} == {
+                k: v
+                for k, v in masked.items()
+                if k not in ("name", "post_norm_channels")
+            }
+            monkeypatch.setattr(run, "CONFIG", dict(masked))
+            cmd = run.rounding_args()
+            assert json.loads(cmd[cmd.index("--post-norm-channels") + 1]) == mask
+            actual = dict(site="mlp", epsilon=0.0, quantile=0.0)
+            assert run.config_mismatch(actual)
+            assert not run.config_mismatch(dict(actual, post_norm_channels=mask))
 
 
 def test_full_run_summary_skips_preview_question_sets(tmp_path, monkeypatch):

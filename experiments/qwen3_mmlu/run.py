@@ -432,20 +432,42 @@ NORM_CHANNEL_MASK = dict(
     expected_kept=604,
     mask_sha256="444ac2a54fe9a671be9ad4d541be6c5b509409e04a436288179ee70c9efec6a5",
 )
+NORM_CHANNEL_MASKS = {
+    604: NORM_CHANNEL_MASK,
+    1980: dict(
+        NORM_CHANNEL_MASK,
+        threshold=0.2,
+        expected_kept=1980,
+        mask_sha256="60f2a02616bdf16eb53ca6f1ef031facc67f9888d591358109c796f16365da38",
+    ),
+    1828: dict(
+        NORM_CHANNEL_MASK,
+        threshold=0.4,
+        expected_kept=1828,
+        mask_sha256="03d2ef25128991deae28e17cfa4e674f2457f23e8a2a2802789328a170094965",
+    ),
+    1539: dict(
+        NORM_CHANNEL_MASK,
+        threshold=0.7,
+        expected_kept=1539,
+        mask_sha256="bb7ac7dc16ef5eb1a2ee3febbed3100d2928a73ce403c5945769f9c1898addf7",
+    ),
+}
 for task, baseline_name, limit in (
     ("mmlu", "chat_baseline", 4),
     ("gsm8k", "gsm8k_baseline", 64),
 ):
     baseline = next(c for c in experiment_configs if c["name"] == baseline_name)
-    for arm in ("baseline", "keep604"):
+    for kept in (None, *NORM_CHANNEL_MASKS):
+        arm = "baseline" if kept is None else f"keep{kept}"
         experiment_configs.append(
             dict(
                 baseline,
                 name=f"normkeep_preview_{task}_{arm}",
                 evaluation_limit=limit,
                 **(
-                    {"post_norm_channels": NORM_CHANNEL_MASK.copy()}
-                    if arm == "keep604"
+                    {"post_norm_channels": NORM_CHANNEL_MASKS[kept].copy()}
+                    if kept is not None
                     else {}
                 ),
             )

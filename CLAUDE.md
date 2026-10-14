@@ -113,7 +113,8 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   (`jobs-smoke/limitN/<row>/` for smoke runs).
   Registry `evaluation_limit` supplies a quick subset when no CLI limit is set.
 - `normkeep_preview_*` registry rows: matched short MMLU STEM/GSM8K baseline
-  and channel-mask evaluations. `post_norm_channels.apply` derives and hash-checks
+  and channel-mask evaluations, including larger-retention follow-ups sharing
+  the original preview baseline protocols. `post_norm_channels.apply` derives and hash-checks
   the fixed common-channel mask from loaded post-attention RMSNorm weights,
   masks only normalized outputs before MoE routing and preserves residuals.
   The wrapper accepts `--post-norm-channels`; `/rounding/config` exposes the mask
