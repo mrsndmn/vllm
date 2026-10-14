@@ -41,7 +41,21 @@ under `run/normkeep-expanded/results.json` and `run/normkeep-expanded/results.cs
 Correction comparisons test preserving each token's original weighted norm-output
 energy and computing routing on the full current-layer norm output before masking
 expert inputs. The combined arm applies both corrections. These evaluations reuse
-the original question sets and baselines; correction results are pending.
+the original question sets and baselines. All correction jobs completed.
+
+RMS restoration alone scored 64/76 on MMLU STEM (84.21%) and 36/64 on GSM8K
+(56.25%). Preserving the router's full current-layer input scored 68/76 (89.47%)
+and 49/64 (76.56%). The combined correction scored 66/76 (86.84%) and 48/64
+(75.00%). All correction answers were parsable. Reasoning-cap counts were 13/76
+and 17/64 for RMS restoration, 3/76 and 2/64 for routing preservation, and 5/76
+and 5/64 for the combined correction.
+
+Validated identical question IDs, prompts, choices, answers and non-intervention
+settings against the original baselines. Recomputed correctness and aggregate
+counts from saved samples; runtime reports match the correction flags, mask hash,
+norm sites and preserved residual. Comparisons and complete job provenance are
+saved in `run/normkeep-corrections/results.json` and
+`run/normkeep-corrections/results.csv`.
 
 ## Conclusions
 
@@ -49,9 +63,16 @@ The initial mask and two stronger follow-up masks destroy useful generation on
 these preliminary subsets. The mildest follow-up preserves answer formatting but
 loses 7.89 percentage points on MMLU STEM and 37.50 on GSM8K. Consistently large
 norm scales alone do not justify discarding all other normalized channels.
-The same shared mask across the selected norm sites is sensitive even to modest
-channel removal; a follow-up should reduce layer scope or use a softer
-intervention before considering a larger evaluation.
+Preserving the full current-layer router input recovers five MMLU and twelve GSM8K
+answers in aggregate relative to plain masking, and substantially reduces
+reasoning-cap events. Routing disruption contributes to the degradation on these
+subsets. RMS restoration alone shows no consistent benefit; combining it with
+routing preservation performs slightly worse than preserving routing alone.
+The router-only correction still falls below the original GSM8K baseline by
+18.75 percentage points, so masked expert inputs remain a material limitation.
+These small preliminary subsets cannot establish the ranking on the full tasks.
+A useful next comparison would preserve routing while reducing layer scope or
+softening the expert-input mask, before considering a larger evaluation.
 
 ## Changelog
 
@@ -74,3 +95,6 @@ intervention before considering a larger evaluation.
   tests and installed-vLLM CUDA checks passed. Submitted the correction evaluations
   and registered durable observation. Job provenance is saved in
   `run/normkeep-corrections/jobs.json`.
+- 2026-10-14: Validated all completed correction evaluations and recorded paired
+  results. Routing preservation improves accuracy and reasoning termination;
+  weighted-RMS restoration adds no consistent benefit on these subsets.
