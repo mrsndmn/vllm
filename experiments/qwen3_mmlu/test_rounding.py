@@ -558,6 +558,9 @@ console.log(JSON.stringify({
   normRaw: normRow([3,-4,0],false),
   normZero: normRow([0,0],true),
   normMissing: normRow([null,null],true),
+  similarity: normalizationSimilarity({layers:[0,1,2,3,4,5],width:4,
+    values:Float32Array.from([1,2,2,4, 10,20,20,40, -1,-2,-2,-4,
+      4,2,2,1, 1,1,1,1, 0,0,0,0])}),
 }));
 """
     )
@@ -579,6 +582,15 @@ console.log(JSON.stringify({
     assert result["normScaled"] == pytest.approx(result["norm"])
     assert result["normRaw"] == [3, -4, 0]
     assert result["normZero"] == result["normMissing"] == [None, None]
+    similarity = result["similarity"]
+    assert similarity["cosine"][0][1] == pytest.approx(1)
+    assert similarity["cosine"][0][2] == pytest.approx(-1)
+    assert similarity["spearman"][0][1] == pytest.approx(1)
+    assert similarity["spearman"][0][2] == pytest.approx(1)
+    assert similarity["spearman"][0][3] == pytest.approx(-1)
+    assert similarity["spearman"][4] == similarity["spearman"][5] == [None] * 6
+    assert similarity["cosine"][5] == [None] * 6
+    assert similarity["rms"][1] == pytest.approx(10 * similarity["rms"][0])
 
 
 def test_threshold_counts_new_zeros_and_affected_tokens():

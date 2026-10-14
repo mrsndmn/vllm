@@ -61,6 +61,17 @@ summary { cursor:pointer; color:var(--text); } code { font-family:ui-monospace,m
     </select></label>
   </div>
   <div class="note" id="norm-note"></div><div id="norm-heatmap"></div>
+  <h2>Similarity of normalization weights across layers</h2>
+  <div class="note">Same normalization family, all hidden coordinates. The overview layer filter applies here; neighboring pairs require both layers to be selected. These metrics are independent of the weight scale and overview metric controls.</div>
+  <div class="grid">
+    <section class="plot"><h2>Neighboring profiles</h2><div id="norm-neighbors"></div></section>
+    <section class="plot"><h2>Neighboring relative difference</h2><div class="note">RMS difference after dividing each weight vector by its own RMS. Zero means identical; equals √(2−2·cosine).</div><div id="norm-difference"></div></section>
+    <section class="plot"><h2>Neighboring overall scale</h2><div class="note">RMS(layer l) / RMS(layer l−1). One means unchanged overall scale.</div><div id="norm-ratio"></div></section>
+    <section class="plot"><h2>All layer pairs</h2>
+      <label>Similarity <select id="norm-similarity"><option value="spearman">Spearman of |weights|</option><option value="cosine">Signed cosine</option></select></label>
+      <div class="note">Cosine compares signed profiles up to scale; Spearman compares magnitude ordering with average ranks for ties. Zero-vector cosine and constant-magnitude Spearman are undefined (blank).</div><div id="norm-pairs"></div>
+    </section>
+  </div>
 </section>
 <details open><summary>What these numbers mean</summary>
 <p>This report describes checkpoint parameters, independent of prompts and tokens. Layer indices are zero-based decoder indices. Global tensors are embedding, output head and final norm. Expert weights are shown before routing; all experts are represented.</p>
@@ -125,6 +136,33 @@ function normRow(row, relative) {
   const rms=Math.sqrt(values.reduce((sum,v)=>sum+v*v,0)/values.length);
   return row.map(v=>v===null || !Number.isFinite(v) || !(rms>0)?null:v/rms);
 }
+function averageRanks(values) {
+  const sorted=values.map((value,i)=>({value,i})).sort((a,b)=>a.value-b.value);
+  const ranks=new Array(values.length);
+  for(let first=0;first<sorted.length;) {
+    let end=first+1;
+    while(end<sorted.length && sorted[end].value===sorted[first].value)end++;
+    for(let j=first;j<end;j++)ranks[sorted[j].i]=(first+end-1)/2;
+    first=end;
+  }
+  return ranks;
+}
+function normalizationSimilarity(norm) {
+  const rows=norm.layers.map((_,i)=>Array.from(norm.values.subarray(i*norm.width,(i+1)*norm.width)));
+  const lengths=rows.map(row=>Math.sqrt(row.reduce((sum,v)=>sum+v*v,0)));
+  const ranks=rows.map(row=>{
+    const ranked=averageRanks(row.map(Math.abs)), mean=(norm.width-1)/2;
+    return ranked.map(v=>v-mean);
+  });
+  const rankLengths=ranks.map(row=>Math.sqrt(row.reduce((sum,v)=>sum+v*v,0)));
+  const matrix=(vectors,norms)=>vectors.map((a,i)=>vectors.map((b,j)=>{
+    if(!(norms[i]>0 && norms[j]>0))return null;
+    const value=a.reduce((sum,v,d)=>sum+v*b[d],0)/(norms[i]*norms[j]);
+    return Math.max(-1,Math.min(1,value));
+  }));
+  return {cosine:matrix(rows,lengths),spearman:matrix(ranks,rankLengths),
+    rms:lengths.map(v=>v/Math.sqrt(norm.width))};
+}
 </script>
 <script id="payload" type="application/octet-stream">%%DATA%%</script>
 <script>
@@ -135,6 +173,37 @@ const option = (value,label) => { const o=document.createElement('option'); o.va
 const STYLE = {paper_bgcolor:'#fcfcfb',plot_bgcolor:'#fcfcfb',font:{family:'system-ui',size:11},margin:{l:70,r:25,t:20,b:90}};
 const PLOT_CONFIG = {responsive:true,displaylogo:false};
 let DATA, VALUES, LINEAR, LOG, families, layerCount, expertCount, index, NORMS;
+function drawNormSimilarity(norm,layers) {
+  const similarity=norm.similarity??=normalizationSimilarity(norm);
+  const positions=new Map(norm.layers.map((l,i)=>[l,i])), selected=new Set(layers);
+  const pairs=layers.filter(l=>selected.has(l-1) && positions.has(l) && positions.has(l-1));
+  const cos=pairs.map(l=>similarity.cosine[positions.get(l-1)][positions.get(l)]);
+  const rho=pairs.map(l=>similarity.spearman[positions.get(l-1)][positions.get(l)]);
+  const hover=pairs.map(l=>`${l-1} → ${l}`);
+  const trace=(y,name)=>({type:'scatter',mode:'lines+markers',x:pairs,y,name,customdata:hover,
+    connectgaps:false,hovertemplate:'Layers %{customdata}<br>%{fullData.name}: %{y:.6g}<extra></extra>'});
+  for(const id of ['norm-neighbors','norm-difference','norm-ratio','norm-pairs'])$(id).style.height='420px';
+  const lineLayout={...STYLE,height:420,xaxis:{title:{text:'Layer l (pair l−1 → l)'},dtick:Math.max(1,Math.ceil(layerCount/12))},legend:{orientation:'h',y:-.3}};
+  const jobs=[
+    Plotly.react('norm-neighbors',[trace(cos,'Signed cosine'),trace(rho,'Spearman of |weights|')],
+      {...lineLayout,yaxis:{title:{text:'Similarity'},range:[-1.05,1.05]}},PLOT_CONFIG),
+    Plotly.react('norm-difference',[trace(cos.map(c=>c===null?null:Math.sqrt(2-2*c)),'Relative RMS difference')],
+      {...lineLayout,yaxis:{title:{text:'RMS difference'},rangemode:'tozero'}},PLOT_CONFIG),
+    Plotly.react('norm-ratio',[trace(pairs.map(l=>{
+      const previous=similarity.rms[positions.get(l-1)];
+      const current=similarity.rms[positions.get(l)];
+      return previous>0 && current>0?current/previous:null;
+    }),'RMS ratio')],{...lineLayout,yaxis:{title:{text:'RMS ratio'},type:'log'},
+      shapes:[{type:'line',xref:'paper',x0:0,x1:1,y0:1,y1:1,line:{color:'#777',dash:'dash'}}]},PLOT_CONFIG)
+  ];
+  const metric=$('norm-similarity').value;
+  const z=layers.map(a=>layers.map(b=>positions.has(a)&&positions.has(b)?similarity[metric][positions.get(a)][positions.get(b)]:null));
+  jobs.push(Plotly.react('norm-pairs',[{type:'heatmap',x:layers,y:layers,z,
+    zmin:-1,zmax:1,colorscale:'RdBu',reversescale:true,hoverongaps:false,
+    colorbar:{title:{text:metric}},hovertemplate:`Layers %{y} ↔ %{x}<br>${metric}: %{z:.6g}<extra></extra>`}],
+    {...STYLE,height:420,xaxis:{title:{text:'Decoder layer'}},yaxis:{title:{text:'Decoder layer'},autorange:'reversed'}},PLOT_CONFIG));
+  return Promise.all(jobs);
+}
 function drawNorm(layers) {
   const family=$('norm-family').value, norm=NORMS[family];
   if(!norm) return;
@@ -148,7 +217,7 @@ function drawNorm(layers) {
   $('norm-note').textContent=`${family} · D = ${norm.width}, L = ${layers.length} · `+
     (relative?'Signed weight / √mean(weight²), computed independently over all D coordinates of each layer and normalization; |1| equals that row’s weight RMS. Zero-RMS rows are blank. ':'Original signed scale weights (FP32). ')+
     'Shared colour scale; gaps mean missing tensors. Final norm and norms of other widths are excluded.';
-  return Plotly.react('norm-heatmap',[{type:'heatmap',
+  return Promise.all([drawNormSimilarity(norm,layers),Plotly.react('norm-heatmap',[{type:'heatmap',
     x:Array.from({length:norm.width},(_,d)=>d),y:layers,z,customdata:raw,
     colorscale:'RdBu',reversescale:true,zmid:0,
     hoverongaps:false,
@@ -156,7 +225,7 @@ function drawNorm(layers) {
     colorbar:{title:{text:title},len:.85}}],
     {...STYLE,height,
       xaxis:{title:{text:'Hidden dimension (0-based)'}},
-      yaxis:{title:{text:'Decoder layer (0-based)'},autorange:'reversed',dtick:1}},PLOT_CONFIG);
+      yaxis:{title:{text:'Decoder layer (0-based)'},autorange:'reversed',dtick:1}},PLOT_CONFIG)]);
 }
 function idsAt(layer,family,expert=-1) {
   const ids=index.get(`${layer}|${family}`)||[];
@@ -276,7 +345,7 @@ async function boot() {
     if(backends.length) $('analysis-note').textContent+=` Computed on: ${backends.join('; ')}${backends.length>1?' (mixed shard backends)':''}. Per-shard code fingerprints are embedded in the report.`;
     const excluded=DATA.provenance.excluded_checkpoint_buffers||[];
     if(excluded.length) $('analysis-note').textContent+=` ${excluded.length} non-parameter checkpoint buffers excluded (listed in embedded provenance).`;
-    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour','norm-family','norm-scale']) {
+    for(const id of ['family','layer','expert','metric','layers','compare','axis','logcolour','norm-family','norm-scale','norm-similarity']) {
       $(id).addEventListener('change',()=>{
         if(id==='family') {
           const global=DATA.records.find(r=>r[3]===$('family').value)?.[1]===-1;

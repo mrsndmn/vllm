@@ -161,6 +161,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   Rendering also reads hidden-width decoder norm scales on CPU for one D × L
   heatmap with a norm-family selector and the overview layer filter; its scale
   selector switches original weights and signed weights / each row's weight RMS.
+  Norm diagnostics also show neighboring cosine/magnitude Spearman, relative RMS
+  difference, RMS ratio and an all-layer similarity map; the layer filter and
+  norm-family selector apply, with a separate cosine/Spearman map selector.
   Configuration is in the script's `experiment_configs`; approximate quantiles
   and stable rank are labelled. The actual HTML byte limit is enforced before
   replacing the output. Unit and Node helper checks extend `test_rounding.py`.
