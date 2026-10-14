@@ -66,7 +66,7 @@ summary { cursor:pointer; color:var(--text); } code { font-family:ui-monospace,m
   <div class="grid">
     <section class="plot"><h2>Neighboring profiles</h2><div id="norm-neighbors"></div></section>
     <section class="plot"><h2>Neighboring relative difference</h2><div class="note">RMS difference after dividing each weight vector by its own RMS. Zero means identical; equals √(2−2·cosine).</div><div id="norm-difference"></div></section>
-    <section class="plot"><h2>Neighboring overall scale</h2><div class="note">RMS(layer l) / RMS(layer l−1). One means unchanged overall scale.</div><div id="norm-ratio"></div></section>
+    <section class="plot"><h2>Neighboring overall scale</h2><div class="note">RMS(layer l) / RMS(layer l−1). One means unchanged overall scale. Zero-RMS pairs are omitted on this logarithmic axis.</div><div id="norm-ratio"></div></section>
     <section class="plot"><h2>All layer pairs</h2>
       <label>Similarity <select id="norm-similarity"><option value="spearman">Spearman of |weights|</option><option value="cosine">Signed cosine</option></select></label>
       <div class="note">Cosine compares signed profiles up to scale; Spearman compares magnitude ordering with average ranks for ties. Zero-vector cosine and constant-magnitude Spearman are undefined (blank).</div><div id="norm-pairs"></div>
