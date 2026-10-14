@@ -1,0 +1,174 @@
+{
+  "source_commit": "a13fc09b0db6514984e495ab489919f4529ae42d",
+  "method": "Per-question means over all saved samples, including incorrect and capped responses. Input: initial saved prompt encoded by pinned tokenizer without added special tokens. Output: server completion_tokens usage, including reasoning, final answer and generated special tokens. No forced continuations.",
+  "tokenizer_snapshot": "/workspace-SR004.nfs2/.cache/huggingface/hub/models--Qwen--Qwen3-30B-A3B-Thinking-2507/snapshots/144afc2f379b542fdd4e85a1fcd5e1f79112d95d",
+  "tokenizer_sha256": {
+    "tokenizer_config.json": "9c9cfea24361f234a5ef67d3f49f69733163f77c0d1fcced5b5aa72913b8ea22",
+    "tokenizer.json": "19564a48c4f71a2a1b937cce34c737a1e662b171c5f5d7edf641a15cd896f07d",
+    "merges.txt": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3"
+  },
+  "rows": [
+    {
+      "experiment": "suite_math500_thinking32k_baseline",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5553.142,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_baseline/20261008-152044/math500/samples.jsonl",
+      "samples_sha256": "269671aef807381fb84a3e4036061b7bc5434647a0bed9b92be0f07045a7d171",
+      "config_sha256": "6c1495d21bced2ec522e78903dcdfe893148ffc306a40dc4121d3316c1b08d88"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_baseline",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7229.80303030303,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_baseline/20261008-160345/gpqa/samples.jsonl",
+      "samples_sha256": "fe8e1cf8ecfd7cad54a8794dc31f3169e4bcd2a0c88e9c56e374021bbd39238f",
+      "config_sha256": "653ca48c870e0719fe89d2e5252ebc4688ecb62c577437d2e2a97de45ec1f64f"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_baseline_repeat",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5451.71,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_baseline_repeat/20261008-152044/math500/samples.jsonl",
+      "samples_sha256": "74735fa1bd26eccb9e4211cdf5187d5e59256dd24e0da575886fc2ab0c270815",
+      "config_sha256": "9cf4860146313d8f812423748794cb2805599a7f9cebe69df40ee59bbb319857"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_baseline_repeat",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 6899.045454545455,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_baseline_repeat/20261008-160356/gpqa/samples.jsonl",
+      "samples_sha256": "6102d44e30b0a5d435088a506ba5dcbf0df16f686066d93d7d3c39e64293560b",
+      "config_sha256": "6b915ee2240bbba0deeb23e641492ed75c63084d9785177a5d2e7c3252550761"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_weight_embedding_q0.7",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5453.462,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_weight_embedding_q0.7/20261008-162549/math500/samples.jsonl",
+      "samples_sha256": "db76e5b39938f71666458f1b0784017cbf884d71165f0d62441ca59eb7ae6640",
+      "config_sha256": "fc7e971f20cbb0b86a4ba5373e866c9fda258ca16448e03d570a139cce794985"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_weight_embedding_q0.7",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7245.69696969697,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_weight_embedding_q0.7/20261008-163521/gpqa/samples.jsonl",
+      "samples_sha256": "c94bea99772f4ffbcdbdc377f8fc68b85bdc0a7de00cf8e344c298843a2bfed4",
+      "config_sha256": "1dc89ea70d4848043d605fd77eda60ba0c6c45a3b522ab9ed08602c13f28b0ba"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_weight_embedding_q0.9",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5345.882,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_weight_embedding_q0.9/20261008-162720/math500/samples.jsonl",
+      "samples_sha256": "7ae7c0efab6b97daacd08400307a0fb725a1d402fafde25bf8c4c221e71f615b",
+      "config_sha256": "a9c3b15f183e105ebe8b70579cb4f840692fcbf35eac2c34601f04d000ffe280"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_weight_embedding_q0.9",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7994.651515151515,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_weight_embedding_q0.9/20261008-163547/gpqa/samples.jsonl",
+      "samples_sha256": "1a3df46fac0d33c163984fe8a090018cb4844e4e871d0d43ad5305a92787bb3c",
+      "config_sha256": "113ad6861c710804166c544968e35ca4cc1a2e310238f6c038a61b97196bf62c"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_weight_both_q0.5",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 6692.108,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_weight_both_q0.5/20261008-163509/math500/samples.jsonl",
+      "samples_sha256": "55cd65f5b931f7a850b9ce48ade8747ae1e824d20c49675155c9145486494cb2",
+      "config_sha256": "5e46295025a5fc6df6944ec99f2c9b153216b4ad075c2827238da85107f74d32"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_weight_both_q0.5",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 10342.712121212122,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_weight_both_q0.5/20261008-163616/gpqa/samples.jsonl",
+      "samples_sha256": "3106cec5acd8505a88b402fda8d5e07fd34347a64fdfb8daa0ef4fed000671ac",
+      "config_sha256": "69f3e9476f8847335aaa7bcff6b88fbe18818366d9a67e1eaf5b9aefdcaccac5"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_mlp_q0.5",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5348.318,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_mlp_q0.5/20261008-152044/math500/samples.jsonl",
+      "samples_sha256": "704aad8f7905fc2e2825e7c2aa32d4987ff623a68c746df68c7b4941ff8b6fb3",
+      "config_sha256": "acaaafb236220165f028bea6baa4305d53360b40f693e449a66424e9b745dacf"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_mlp_q0.5",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7564.070707070707,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_mlp_q0.5/20261008-160544/gpqa/samples.jsonl",
+      "samples_sha256": "53114baab0dbea59153c0d1a9e76edfd09656725feff476b31cdc5ad5c5fdcaa",
+      "config_sha256": "4d28cca657387c9c8f12b47d4239d218a99a051660c64d929c5a3c89e590bdd9"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_mlp_q0.8",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 4593.836,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_mlp_q0.8/20261008-152044/math500/samples.jsonl",
+      "samples_sha256": "fefe1b4cc0b2909b7357000aef1f9cf9f0d7f136d41e4ba8d9e74b3e3a29ce16",
+      "config_sha256": "2faaf8fa70afa478419c07661e7ac9ca4b4d558377b28f63a75785a8b95b76a8"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_mlp_q0.8",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7086.722222222223,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_mlp_q0.8/20261008-160633/gpqa/samples.jsonl",
+      "samples_sha256": "71e5dc26c034ec9b03867f945c11b32db867f9ac35945bf0c2d46fb0b1005c6c",
+      "config_sha256": "1589c3e5b0f417e0cd4b5bec918d7bab155cac04a6e3160ad3e100c7748ec238"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_block_q0.25",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5314.238,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_block_q0.25/20261008-160104/math500/samples.jsonl",
+      "samples_sha256": "33db77a6486029a7d61830ded788433a6bb5f68807bbfc256e7d00a118e670d2",
+      "config_sha256": "e48aa02122f927cca0ee8753825f8f9bc4273b25f1df8219d9d09031f300e3dd"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_block_q0.25",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 6711.00505050505,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_block_q0.25/20261008-162340/gpqa/samples.jsonl",
+      "samples_sha256": "ab50fd686341cec6bb8b3cd16b6f37702bb47512596d17fc29dd1ed143f8c7de",
+      "config_sha256": "eb7c2f2fe9da2fcbaf71f2627db3a1279367c4b2c7ece770052b3f2ff633d24b"
+    },
+    {
+      "experiment": "suite_math500_thinking32k_moe_out_q0.4",
+      "questions": 500,
+      "mean_input_tokens": 102.94,
+      "mean_output_usage_tokens": 5191.882,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_math500_thinking32k_moe_out_q0.4/20261008-155836/math500/samples.jsonl",
+      "samples_sha256": "de386dd1973319d739c6f130184d4416bdc77c49a4e450f8bd1e6f9a23fa90a1",
+      "config_sha256": "f6c6bf852c6975a2c1cfc7e083a5089a568a743d7015048439ed47be3cc86c97"
+    },
+    {
+      "experiment": "suite_gpqa_thinking32k_moe_out_q0.4",
+      "questions": 198,
+      "mean_input_tokens": 241.82323232323233,
+      "mean_output_usage_tokens": 7178.20202020202,
+      "samples_path": "/mnt/virtual_ai0001053-00054_SR004-nfs2/d.tarasov/vllm-artifacts/qwen3_mmlu/jobs/suite_gpqa_thinking32k_moe_out_q0.4/20261008-162320/gpqa/samples.jsonl",
+      "samples_sha256": "003170639413dbfaf7a3ffe2fd6a690a33a008bed9f350067d1845ccc1bf0241",
+      "config_sha256": "14a9b1e70e03d4ab27f07b39b1bf443931751d7940b1d1b3b6055deb30862ff6"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.75in]{geometry}
+\usepackage{graphicx}
+\graphicspath{{figures/}}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\title{Activation and Weight Zeroing in Generative Evaluation}
+\author{Working research draft}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+This working draft introduces the evaluation workload for experiments on
+activation and weight zeroing. We report input and output text lengths from
+completed unmodified baseline runs and their repeats. These descriptive
+statistics characterize the workload; they do not establish speedups or the
+accuracy effects of zeroing. We also report thirty completed evaluations of
+joint activation zeroing, joint weight zeroing, and their combination. The
+combinations show task-dependent quality changes, including losses on code
+generation and reasoning alongside largely preserved long-context retrieval.
+Finally, eighteen evaluations with a thinking checkpoint and extended reasoning
+budget retain high accuracy under seven selected interventions. We report their
+input and full-generation token lengths, and identify increased generation-cap
+exhaustion under joint embedding and output-head zeroing.
+\end{abstract}
+\input{sections/workload}
+\input{sections/joint-zeroing}
+\input{sections/thinking-zeroing}
+\input{appendix}
+\end{document}

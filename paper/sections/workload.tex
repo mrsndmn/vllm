@@ -1,0 +1,47 @@
+\section{Generative evaluation workload}
+All evaluations in this report are generative: the model writes an answer
+through its chat template and the saved answer is graded. Experiment design,
+model selection, dataset revisions, and generation settings are defined in
+\texttt{experiments/qwen3\_mmlu/run.py}; the paper does not maintain a second
+configuration. Activation zeroing operates at the selected experts' MLP
+intermediates, the residual-stream sum, or the MoE output. Weight zeroing
+operates on checkpoint parameters. Their accuracy results require comparisons
+against each benchmark's own baseline and repeat.
+
+Tables~\ref{tab:input-lengths} and~\ref{tab:output-lengths} describe the
+completed baseline workloads. Each column is a benchmark, each row is an
+experiment arm, and each mean weights its questions equally. The repeat uses
+the same protocol and captures run-to-run variation. Benchmark sizes appear in
+Table~\ref{tab:sample-counts}. We do not pool benchmarks with different sizes.
+
+Input length counts the saved initial prompt, including chat-template tokens.
+Output length counts the saved model-written text, retokenized with the
+experiment's pinned tokenizer and no additional special tokens. For MMLU STEM
+and GSM8K, reasoning and any forced-answer continuation are encoded separately
+and their lengths summed. The injected forced-answer suffix is excluded.
+Invisible stop tokens are excluded as well. Thus these are text lengths rather
+than server-reported completion usage. Input length does not include a second
+prefill when an answer is forced. The analysis is offline and requires no new
+model generation.
+
+\begin{table}[ht]
+\centering
+\caption{Mean initial input length in tokens.}
+\label{tab:input-lengths}
+\input{tables/mean_input_tokens}
+\end{table}
+\begin{table}[ht]
+\centering
+\caption{Mean model-written output text length in tokens.}
+\label{tab:output-lengths}
+\input{tables/mean_output_text_tokens}
+\end{table}
+
+\section{Interpretation and limitations}
+Input length describes prefill workload, while output length describes the
+amount of generated text. Neither is a latency measurement: kernel performance,
+batching, prefix caching, and repeated prefills are not measured here.
+Different task instructions and generation caps also affect output length.
+A response ending at a generation cap remains in the mean; the table describes
+observed responses, not an estimate of uncapped answer length. In particular,
+RULER columns use their configured mixture of subtasks and answer budgets.

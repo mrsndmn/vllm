@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qwen3 activation token stats</title>
+<script src="%%PLOTLY%%"></script>
+<style>
+  :root {
+    --surface: #fcfcfb;
+    --text: #0b0b0b;
+    --text-2: #52514e;
+    --line: #e4e3df;
+    --field: #c9c8c3;
+  }
+  body {
+    margin: 0;
+    padding: 20px 28px 40px;
+    background: var(--surface);
+    color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .meta { color: var(--text-2); font-size: 12px; margin-bottom: 16px; overflow-wrap: anywhere; }
+  .controls { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
+  .controls label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-2); }
+  .controls .hint { color: var(--text-2); white-space: nowrap; }
+  select, input[type="text"] {
+    font: inherit; color: var(--text); background: #fff;
+    border: 1px solid var(--field); border-radius: 4px; padding: 4px 6px;
+  }
+  input[type="text"] { width: 260px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  input[type="number"] { width: 70px; font: inherit; padding: 4px 6px; border: 1px solid var(--field); border-radius: 4px; }
+  input.invalid { border-color: #b3261e; outline: 1px solid #b3261e; }
+  .error { color: #b3261e; font-size: 12px; min-height: 18px; margin: 4px 0 8px; }
+  .info { border-top: 1px solid var(--line); padding-top: 10px; margin-bottom: 4px; }
+  .info .question { white-space: pre-wrap; margin: 0 0 6px; }
+  .info ol { margin: 0 0 6px; padding-left: 22px; }
+  .info .facts { color: var(--text-2); font-size: 12px; }
+  .info .facts strong { color: var(--text); }
+  details { margin-top: 12px; color: var(--text-2); font-size: 12px; max-width: 980px; }
+  details summary { cursor: pointer; color: var(--text); }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  /* The figure is at least 1200 px wide (see MIN_WIDTH); scroll when narrower. */
+  .figure { overflow-x: auto; }
+  .controls label.check { flex-direction: row; align-items: center; gap: 6px;
+    padding-bottom: 6px; }
+  .site-note { color: var(--text-2); font-size: 12px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Qwen3-30B-A3B activation token stats</h1>
+<div class="meta" id="meta"></div>
+<div class="controls">
+  <label>Sample <select id="sample"></select></label>
+  <label>Site <select id="site"></select></label>
+  <label>Stat (colour) <select id="stat"></select></label>
+  <label><span class="hint">States (0 = embedding; ℓ ≥ 1 = layer ℓ−1)</span>
+    <input id="states" type="text" spellcheck="false" autocomplete="off"
+      placeholder="e.g. 1-8,15,40-48" title="Comma-separated states and ranges a-b, e.g. 1-8,15,40-48"></label>
+  <label><span class="hint">Leading tokens left out of colour range</span>
+    <input id="skip" type="number" min="0" step="1"></label>
+  <label class="check"><input id="logx" type="checkbox">
+    Distribution (right): log x (|x|)</label>
+</div>
+<div class="site-note" id="site-note"></div>
+<div class="error" id="error" role="alert"></div>
+<div class="info" id="info"></div>
+<div class="figure" id="figure"><div id="heatmap"></div></div>
+<details>
+  <summary>Definitions</summary>
+  <p>Each sample is a chat_baseline reference response fed back through the HF model in
+  one forward pass (prompt + recorded response, no new generation). Each layer computes
+  r = x + attn(norm(x)), then the MoE output h = Σ wₖ·expertₖ(norm(r)) over the 8 selected
+  experts, and passes on r + h. Sites (one token row each):</p>
+  <ul>
+    <li><code>block</code>: the hidden state, r + h after the layer (2048 values); state 0
+    is the embedding output, state ℓ the stream after layer ℓ−1, before the final norm.
+    This is the sum the <code>block</code> zeroing site tests.</li>
+    <li><code>residual</code>: r, the stream after the layer's attention and before the MoE
+    add (2048 values; vLLM's <code>residual</code>).</li>
+    <li><code>moe_out</code>: h, the router-weighted sum of the selected experts' outputs
+    (2048 values; the <code>moe_out</code> zeroing site).</li>
+    <li><code>experts</code>: each selected expert's down_proj output before its routing
+    weight, 8 × 2048 = 16384 values.</li>
+    <li><code>mlp</code>: each selected expert's SiLU(gate)·up, the input of down_proj,
+    8 × 768 = 6144 values (the <code>mlp</code> zeroing site).</li>
+  </ul>
+  <p>Per-layer sites have no state 0; state ℓ ≥ 1 is layer ℓ−1 at every site, so the same
+  state selection shows the same layers when switching sites.</p>
+  <p>Token stats per (token, state), in FP32 over the site's token row of n values:
+  signed <code>min</code>, <code>max</code>, <code>mean</code>, <code>median</code> (mean
+  of the two middle values), and the magnitude quantiles <code>q10</code>–<code>q90</code>,
+  each the ⌊q·n⌋-th smallest |x|, the cutoff that quantile zeroing at q would use on that
+  row.</p>
+  <p>Colour: magnitude quantiles use log10 on a one-hue scale; signed stats use
+  sign·log10(1+|x|) on a blue–gray–red scale centred on 0. The range covers the shown
+  states and tokens, except the chosen number of leading tokens: the first two
+  (<code>&lt;|im_start|&gt;</code>, <code>user</code>) carry massive activations (|x| up to
+  ~1400) that would otherwise set it; their cells are still drawn, clamped. Hover any
+  cell for the raw values of all nine stats.</p>
+  <p>Distribution (right of the heatmap, one ridge per shown state): all values of that
+  site row over every token of the sample (tokens × n). Default: signed x on a linear
+  axis, 201 bins over ±R, where R (printed on each ridge) is that row's 99.5th
+  percentile of |x|; each ridge is scaled to its own R, so the axis reads x / R, and the
+  0.5% of values beyond R (mostly massive activations) are left out. Log x: |x| on a log
+  axis in log-spaced bins (10 per decade from 1e-5 to 1e4; smaller magnitudes and zeros
+  are left out); per log bin, any distribution peaked at 0 looks like it falls off
+  towards 0. Each ridge is scaled to its own tallest bin; hover a point for the bin's
+  share of all values.</p>
+</details>
+
+<script type="application/json" id="data">%%DATA%%</script>
+<script id="viz-lib">
+// Pure helpers; test_rounding.py runs them under node.
+const SIGNED = new Set(["min", "max", "mean", "median"]);
+
+function parseStates(text, count) {
+  if (!text.trim()) throw new Error("Enter at least one state, e.g. 0,8,16-24,48");
+  const picked = new Set();
+  for (const raw of text.split(",")) {
+    const part = raw.trim();
+    const match = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(part);
+    if (!match) throw new Error(`"${part}" is not a state number or a range a-b`);
+    const low = Number(match[1]);
+    const high = match[2] === undefined ? low : Number(match[2]);
+    if (low > high) throw new Error(`Range "${part}" runs backwards`);
+    if (high >= count) throw new Error(`State ${high} is outside 0-${count - 1}`);
+    for (let state = low; state <= high; state++) picked.add(state);
+  }
+  return [...picked].sort((a, b) => a - b);
+}
+
+function transform(stat, value) {
+  if (SIGNED.has(stat)) return Math.sign(value) * Math.log10(1 + Math.abs(value));
+  return value > 0 ? Math.log10(value) : null;
+}
+
+function untransform(stat, z) {
+  if (SIGNED.has(stat)) return Math.sign(z) * (10 ** Math.abs(z) - 1);
+  return 10 ** z;
+}
+
+// States a site can show: per-layer sites have no state 0 (the embedding).
+function siteStates(states, first) {
+  return {
+    shown: states.filter((state) => state >= first),
+    dropped: states.filter((state) => state < first),
+  };
+}
+
+// Points of one state's |x| distribution from sign-split |x| bin counts
+// (bin 0: |x| < edges[0]; bin i: edges[i-1] <= |x| < edges[i]; the last is open):
+// bin i >= 1 at its geometric centre (log axis); bin 0 is left out.
+function distribution(negative, positive, edges) {
+  const last = edges.length - 1;
+  const points = [];
+  for (let i = 1; i <= last; i++) {
+    points.push({
+      x: Math.sqrt(edges[i - 1] * edges[i]), count: negative[i] + positive[i],
+      lo: edges[i - 1], hi: i === last ? Infinity : edges[i],
+    });
+  }
+  return points;
+}
+
+// Points of one state's signed distribution from equal-width bins over
+// [-reach, reach], at their centres in units of reach (so x runs from -1 to 1).
+function linearDistribution(counts, reach) {
+  const width = 2 / counts.length;
+  return Array.from(counts, (count, i) => ({
+    x: -1 + width * (i + 0.5), count, lo: reach * (-1 + width * i),
+    hi: reach * (-1 + width * (i + 1)),
+  }));
+}
+</script>
+<script>
+const DATA = JSON.parse(document.getElementById("data").textContent);
+const NAMES = DATA.stat_names;
+const WIDTH = NAMES.length;
+// Sequential: one blue hue, light to dark. Diverging: blue and red arms, gray middle.
+const SEQUENTIAL = [
+  [0, "#cde2fb"], [1 / 6, "#9ec5f4"], [2 / 6, "#6da7ec"], [3 / 6, "#3987e5"],
+  [4 / 6, "#256abf"], [5 / 6, "#184f95"], [1, "#0d366b"],
+];
+const DIVERGING = [
+  [0, "#0d366b"], [0.2, "#2a78d6"], [0.4, "#9ec5f4"], [0.5, "#f0efec"],
+  [0.6, "#f2b0ab"], [0.8, "#e34948"], [1, "#8c1d1d"],
+];
+const els = Object.fromEntries(
+  ["meta", "sample", "site", "stat", "states", "skip", "logx", "site-note", "error", "info",
+    "figure", "heatmap"].map(
+    (id) => [id, document.getElementById(id)]
+  )
+);
+
+function decode(b64, Type = Float32Array) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  return new Type(bytes.buffer);
+}
+
+function escapeHtml(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&#34;");
+}
+
+function fmt(value) {
+  return Number(value.toPrecision(3)).toString();
+}
+
+function stateLabel(state, site) {
+  if (site !== "block") return `${state} · L${state - 1}`;
+  return state === 0 ? "0 · emb" : `${state} · after L${state - 1}`;
+}
+
+function statLabel(name) {
+  return SIGNED.has(name) ? `${name} (signed)` : `${name} of |x|`;
+}
+
+const samples = DATA.samples.map((sample) => ({
+  ...sample,
+  sites: Object.fromEntries(Object.entries(sample.sites).map(([name, site]) => [
+    name,
+    {
+      ...site, values: decode(site.stats), hist: decode(site.hist, Int32Array),
+      linear: decode(site.linear, Int32Array),
+    },
+  ])),
+  labels: sample.tokens.map((token) => escapeHtml(JSON.stringify(token))),
+}));
+const SITE_NOTES = Object.fromEntries(DATA.sites.map((site) => [site.name, site.description]));
+
+els.meta.textContent =
+  `${DATA.model} · reference ${DATA.reference} · commit ${DATA.commit} · ${DATA.created}`;
+samples.forEach((sample, i) => {
+  const verdict = sample.correct ? "correct" : "wrong";
+  els.sample.add(new Option(`${sample.subject} #${sample.index} (${verdict})`, i));
+});
+DATA.sites.forEach((site) => els.site.add(new Option(site.name, site.name)));
+NAMES.forEach((name) => els.stat.add(new Option(statLabel(name), name)));
+els.stat.value = "q50";
+els.states.value = DATA.default_states;
+els.skip.value = DATA.default_skip;
+let lastStates = parseStates(DATA.default_states, DATA.states);
+
+function showInfo(sample) {
+  els.info.replaceChildren();
+  const question = document.createElement("p");
+  question.className = "question";
+  question.textContent = sample.question;
+  const choices = document.createElement("ol");
+  choices.type = "A";
+  sample.choices.forEach((choice) => {
+    const item = document.createElement("li");
+    item.textContent = choice;
+    choices.append(item);
+  });
+  const facts = document.createElement("div");
+  facts.className = "facts";
+  const agreement = (100 * sample.argmax_agreement).toFixed(1);
+  const parts = [
+    ["gold", sample.answer], ["prediction", `${sample.prediction} (${sample.mode})`],
+    ["tokens", `${sample.prompt_tokens} prompt + ` +
+      `${sample.tokens.length - sample.prompt_tokens} response`],
+    ["HF argmax = recorded next token", `${agreement}% of response tokens`],
+  ];
+  parts.forEach(([key, value], i) => {
+    if (i) facts.append(" · ");
+    const strong = document.createElement("strong");
+    strong.textContent = value;
+    facts.append(`${key}: `, strong);
+  });
+  els.info.append(question, choices, facts);
+}
+
+function ticks(stat, low, high) {
+  let values;
+  if (SIGNED.has(stat)) {
+    values = [-1, -2 / 3, -1 / 3, 0, 1 / 3, 2 / 3, 1].map((f) => f * high);
+  } else {
+    values = [];
+    for (let t = Math.ceil(low); t <= Math.floor(high); t++) values.push(t);
+    if (values.length < 3) values = [0, 0.25, 0.5, 0.75, 1].map((f) => low + f * (high - low));
+  }
+  return { tickvals: values, ticktext: values.map((z) => fmt(untransform(stat, z))) };
+}
+
+const EDGES = DATA.hist_edges;
+// Heatmap, colorbar, and distribution panel overlap below this plot width.
+const MIN_WIDTH = 1200;
+
+function binLabel(point, log) {
+  if (!log) return `x ${fmt(point.lo)} – ${fmt(point.hi)}`;
+  return point.hi === Infinity
+    ? `|x| ≥ ${fmt(point.lo)}` : `|x| ${fmt(point.lo)} – ${fmt(point.hi)}`;
+}
+
+// One ridge per shown state (row), scaled to its tallest bin, on the x2 axis.
+// Linear view: each row's own ±R range, labelled on the ridge.
+function ridges(site, name, states, log) {
+  const size = EDGES.length;
+  const bins = DATA.linear_bins;
+  const traces = [];
+  const labels = [];
+  let low = Infinity;
+  let high = -Infinity;
+  states.forEach((state, row) => {
+    const index = state - site.first_state;
+    const base = index * 2 * size;
+    const negative = site.hist.subarray(base, base + size);
+    const positive = site.hist.subarray(base + size, base + 2 * size);
+    const total = negative.reduce((a, b) => a + b, 0) + positive.reduce((a, b) => a + b, 0);
+    const reach = site.reach[index];
+    const points = log
+      ? distribution(negative, positive, EDGES)
+      : linearDistribution(site.linear.subarray(index * bins, (index + 1) * bins), reach);
+    if (!log) {
+      labels.push({
+        xref: "x2", yref: "y", x: 1, y: row + 0.42, text: `±${fmt(reach)}`,
+        showarrow: false, xanchor: "right", yanchor: "top",
+        font: { size: 9, color: "#52514e" },
+      });
+    }
+    const peak = Math.max(...points.map((point) => point.count)) || 1;
+    for (const point of points) {
+      if (point.count) {
+        low = Math.min(low, point.x);
+        high = Math.max(high, point.x);
+      }
+    }
+    const floor = row - 0.45;
+    const x = points.map((point) => point.x);
+    const y = points.map((point) => floor + (0.9 * point.count) / peak);
+    const custom = points.map((point) => [
+      `${name} ${stateLabel(state, name)}`, binLabel(point, log),
+      ((100 * point.count) / total).toPrecision(3),
+    ]);
+    traces.push({
+      type: "scatter",
+      mode: "lines",
+      xaxis: "x2",
+      yaxis: "y",
+      x: [x[0], ...x, x[x.length - 1]],
+      y: [floor, ...y, floor],
+      customdata: [custom[0], ...custom, custom[custom.length - 1]],
+      fill: "toself",
+      fillcolor: "rgba(42, 120, 214, 0.22)",
+      line: { color: "#2a78d6", width: 1.25 },
+      hoveron: "points",
+      hovertemplate: "state %{customdata[0]}<br>%{customdata[1]}<br>" +
+        "%{customdata[2]}% of values<extra></extra>",
+      showlegend: false,
+    });
+  });
+  return { traces, labels, low, high };
+}
+
+function distributionAxis(log, low, high, tokens) {
+  const axis = {
+    domain: [0.79, 1],
+    anchor: "y",
+    automargin: true,
+    tickangle: 0,
+    tickfont: { size: 10 },
+    title: {
+      text: log ? `|x| (log), all ${tokens} tokens` : `x / R (linear), all ${tokens} tokens`,
+    },
+    showgrid: false,
+    color: "#52514e",
+  };
+  if (!log) {
+    return {
+      ...axis, range: [-1.05, 1.05], tickvals: [-1, -0.5, 0, 0.5, 1],
+      ticktext: ["−R", "−R/2", "0", "R/2", "R"], zeroline: true, zerolinecolor: "#c9c8c3",
+    };
+  }
+  if (!Number.isFinite(low)) [low, high] = [1e-3, 1];
+  return {
+    ...axis, type: "log", dtick: 2, exponentformat: "power", zeroline: false,
+    range: [Math.log10(low) - 0.15, Math.log10(high) + 0.15],
+  };
+}
+
+// Ranges a double-click should restore; Plotly's own reset returns to the first draw's.
+let home = {};
+
+function draw() {
+  const index = Number(els.sample.value);
+  const sample = samples[index];
+  const name = els.site.value;
+  const site = sample.sites[name];
+  const stat = els.stat.value;
+  const column = NAMES.indexOf(stat);
+  const count = sample.tokens.length;
+  let selected;
+  try {
+    selected = parseStates(els.states.value, DATA.states);
+    lastStates = selected;
+    els.error.textContent = "";
+    els.states.classList.remove("invalid");
+  } catch (error) {
+    selected = lastStates;
+    els.error.textContent = `${error.message}; showing the last valid selection.`;
+    els.states.classList.add("invalid");
+  }
+  let { shown: states, dropped } = siteStates(selected, site.first_state);
+  let note = `${SITE_NOTES[name]}; token row of ${site.width} values.`;
+  if (dropped.length) note += ` State 0 (embedding) exists only for block and is not shown.`;
+  if (!states.length) {
+    states = siteStates(parseStates(DATA.default_states, DATA.states), site.first_state).shown;
+    note += " Showing the default states instead.";
+  }
+  els["site-note"].textContent = note;
+  const first = Math.max(0, Math.floor(Number(els.skip.value)) || 0);
+  let low = Infinity;
+  let high = -Infinity;
+  const z = [];
+  const custom = [];
+  for (const state of states) {
+    const zRow = new Array(count);
+    const cRow = new Array(count);
+    for (let t = 0; t < count; t++) {
+      const base = ((state - site.first_state) * count + t) * WIDTH;
+      const value = transform(stat, site.values[base + column]);
+      zRow[t] = value;
+      if (value !== null && t >= first) {
+        low = Math.min(low, value);
+        high = Math.max(high, value);
+      }
+      cRow[t] = [
+        sample.labels[t], t < sample.prompt_tokens ? "prompt" : "response",
+        `${name} ${stateLabel(state, name)}`, ...site.values.subarray(base, base + WIDTH),
+      ];
+    }
+    z.push(zRow);
+    custom.push(cRow);
+  }
+  if (!Number.isFinite(low)) [low, high] = [0, 0];
+  if (SIGNED.has(stat)) {
+    high = Math.max(Math.abs(low), Math.abs(high)) || 1;
+    low = -high;
+  } else if (low === high) {
+    [low, high] = [low - 0.5, high + 0.5];
+  }
+  const rows = NAMES.map((name, i) => {
+    const line = `${SIGNED.has(name) ? name : "|x| " + name} %{customdata[${i + 3}]:.4g}`;
+    return name === stat ? `<b>${line}</b>` : line;
+  });
+  const hover = "<b>%{customdata[0]}</b><br>position %{x} · %{customdata[1]}<br>" +
+    "state %{customdata[2]}<br><br>" + rows.join("<br>") + "<extra></extra>";
+  const trace = {
+    type: "heatmap",
+    x: [...Array(count).keys()],
+    y: states.map((_, row) => row),
+    z,
+    customdata: custom,
+    hovertemplate: hover,
+    hoverongaps: false,
+    colorscale: SIGNED.has(stat) ? DIVERGING : SEQUENTIAL,
+    zauto: false,
+    zmin: low,
+    zmax: high,
+    ygap: 2,
+    colorbar: {
+      title: {
+        text: `${name}: ${SIGNED.has(stat) ? `${stat} (symlog)` : `|x| ${stat} (log)`}`,
+        side: "right",
+      },
+      thickness: 12,
+      outlinewidth: 0,
+      x: 0.68,
+      xanchor: "left",
+      ...ticks(stat, low, high),
+    },
+  };
+  const log = els.logx.checked;
+  const ridge = ridges(site, name, states, log);
+  const boundary = sample.prompt_tokens - 0.5;
+  const layout = {
+    // Token zoom survives stat/state/skip changes; rows reset with the states.
+    uirevision: String(index),
+    width: Math.max(MIN_WIDTH, els.figure.clientWidth),
+    height: Math.max(280, 110 + states.length * 24),
+    margin: { l: 20, r: 10, t: 26, b: 50 },
+    paper_bgcolor: "#fcfcfb",
+    plot_bgcolor: "#fcfcfb",
+    font: { family: "system-ui, sans-serif", size: 12, color: "#0b0b0b" },
+    xaxis: {
+      domain: [0, 0.67],
+      automargin: true,
+      title: { text: "token position (drag to zoom, double-click to reset)" },
+      showgrid: false, zeroline: false, color: "#52514e",
+    },
+    xaxis2: {
+      ...distributionAxis(log, ridge.low, ridge.high, count),
+      uirevision: `${index}|${name}|${states}|${log}`,
+    },
+    yaxis: {
+      tickmode: "array",
+      tickvals: states.map((_, row) => row),
+      ticktext: states.map((state) => stateLabel(state, name)),
+      range: [-0.5, states.length - 0.5],
+      uirevision: `${index}|${name}|${states}`,
+      showgrid: false, zeroline: false, color: "#52514e", automargin: true,
+    },
+    shapes: [{
+      type: "line", x0: boundary, x1: boundary, yref: "paper", y0: 0, y1: 1,
+      line: { color: "#0b0b0b", width: 1.5, dash: "dot" },
+    }],
+    annotations: [{
+      x: boundary, yref: "paper", y: 1, text: "response →", showarrow: false,
+      xanchor: "left", yanchor: "bottom", font: { size: 11, color: "#52514e" },
+    }, ...ridge.labels],
+    hoverlabel: {
+      bgcolor: "#ffffff", bordercolor: "#c9c8c3", align: "left",
+      font: { color: "#0b0b0b", family: "ui-monospace, Menlo, monospace", size: 12 },
+    },
+  };
+  // Explicit size instead of Plotly's responsive mode, which collapses the plot
+  // to zero height inside the scrolling container after a window resize.
+  Plotly.react(els.heatmap, [trace, ...ridge.traces], layout, { displaylogo: false });
+  home = { "yaxis.range": layout.yaxis.range, "xaxis2.range": layout.xaxis2.range };
+}
+
+els.sample.addEventListener("change", () => {
+  showInfo(samples[Number(els.sample.value)]);
+  draw();
+});
+els.site.addEventListener("change", draw);
+els.stat.addEventListener("change", draw);
+els.skip.addEventListener("input", draw);
+els.logx.addEventListener("change", draw);
+let resizing;
+let drawnWidth = 0;
+// Follows the figure's own width (window resizes, page scrollbars appearing).
+new ResizeObserver(() => {
+  if (els.figure.clientWidth === drawnWidth) return;
+  clearTimeout(resizing);
+  resizing = setTimeout(() => {
+    drawnWidth = els.figure.clientWidth;
+    draw();
+  }, 150);
+}).observe(els.figure);
+els.states.addEventListener("change", draw);
+els.states.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") draw();
+});
+showInfo(samples[0]);
+drawnWidth = els.figure.clientWidth;
+draw();
+els.heatmap.on("plotly_doubleclick", () => {
+  setTimeout(() => Plotly.relayout(els.heatmap, home), 0);
+});
+</script>
+</body>
+</html>
