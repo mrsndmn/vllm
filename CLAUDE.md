@@ -177,6 +177,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   six static PNGs (relative heatmaps, coordinate profiles, persistence, layer
   scale/concentration, adjacent similarity and all-layer rank correlation) and
   `summary.json` to its configured artifact directory.
+  `--name qwen3_post_attention_distributions` writes per-layer full-range raw and
+  relative histograms, exact quantile bands and pooled/example-layer comparisons
+  for the registry's post-attention layer range, plus a separate summary JSON.
 - `experiments/qwen3_mmlu/qwen_norm_compare.py`: CPU-only comparison of the two
   decoder norm scale vectors per layer in Qwen and OLMo checkpoints. Additional
   models use pinned norm-only subsets fetched from Hugging Face.

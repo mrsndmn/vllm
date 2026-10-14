@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib
 import numpy as np
 import pybase64 as base64
+from matplotlib.colors import LogNorm
 from scipy.stats import rankdata
 
 import run
@@ -32,6 +33,20 @@ experiment_configs = [
         "dpi": 160,
     }
 ]
+experiment_configs.append(
+    {
+        "name": "qwen3_post_attention_distributions",
+        "analysis": "distributions",
+        "report": experiment_configs[0]["report"],
+        "output": str(run.ARTIFACTS / "weight-viz/post-attention-distributions"),
+        "family": "post_attention_layernorm",
+        "layer_range": [4, 44],
+        "histogram_bins": 128,
+        "quantiles": [0.01, 0.1, 0.5, 0.9, 0.99],
+        "example_layers": [4, 14, 24, 34, 44],
+        "dpi": 160,
+    }
+)
 
 
 def load_norms(report):
@@ -307,6 +322,128 @@ def plot(config):
     print(json.dumps(summary, indent=2))
 
 
+def plot_distributions(config):
+    """Plot full-range per-layer distributions, quantiles and pooled counts."""
+    model, norms = load_norms(config["report"])
+    layers, weights, rms, relative = norms[config["family"]]
+    first, last = config["layer_range"]
+    selected = (layers >= first) & (layers <= last)
+    layers, weights, rms, relative = (
+        a[selected] for a in (layers, weights, rms, relative)
+    )
+    if not np.array_equal(layers, np.arange(first, last + 1)):
+        raise ValueError("Requested layer range has missing normalization tensors")
+    output = Path(config["output"])
+    output.mkdir(parents=True, exist_ok=True)
+    heading = (
+        f"{model}\n{config['family']} · layers {first}–{last} inclusive "
+        f"· D = {weights.shape[1]}"
+    )
+    series = [
+        (weights, "Original signed weight"),
+        (relative, "Signed weight / layer weight RMS"),
+    ]
+    histograms = []
+    for values, label in series:
+        edges = np.linspace(values.min(), values.max(), config["histogram_bins"] + 1)
+        counts = np.array([np.histogram(row, bins=edges)[0] for row in values])
+        if not np.all(counts.sum(axis=1) == weights.shape[1]):
+            raise RuntimeError("Histogram does not include every weight")
+        histograms.append((edges, counts / weights.shape[1], label))
+
+    def save(fig, name):
+        fig.savefig(output / f"{name}.png", dpi=config["dpi"], bbox_inches="tight")
+        plt.close(fig)
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 8), constrained_layout=True)
+    for ax, (edges, probabilities, label) in zip(axes, histograms):
+        image = ax.imshow(
+            np.ma.masked_equal(probabilities, 0),
+            aspect="auto",
+            interpolation="nearest",
+            cmap="viridis",
+            norm=LogNorm(vmin=1 / weights.shape[1], vmax=probabilities.max()),
+            extent=[edges[0], edges[-1], last + 0.5, first - 0.5],
+        )
+        ax.set(
+            xlabel=label,
+            ylabel="Decoder layer",
+            title="Per-layer histograms; shared bins",
+        )
+        ax.set_yticks(np.arange(first, last + 1, 4))
+        fig.colorbar(
+            image, ax=ax, label="Fraction of layer weights per bin (log colour)"
+        )
+    fig.suptitle(
+        heading
+        + "\nEvery row sums to 100%; white = empty bin; full weight range included"
+    )
+    save(fig, "01-layer-distributions")
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5), constrained_layout=True)
+    quantiles = []
+    for ax, (values, label) in zip(axes, series):
+        q = np.quantile(values, config["quantiles"], axis=1)
+        quantiles.append(q)
+        ax.fill_between(layers, q[0], q[4], alpha=0.15, color="#4477aa", label="1–99%")
+        ax.fill_between(layers, q[1], q[3], alpha=0.3, color="#4477aa", label="10–90%")
+        ax.plot(layers, q[2], color="#225588", label="Median")
+        ax.set(
+            xlabel="Decoder layer",
+            ylabel=label,
+            title="Exact quantiles across all hidden coordinates",
+        )
+        ax.legend()
+        ax.grid(alpha=0.15)
+    axes[1].axhline(1, color="#777", linestyle="--", linewidth=0.8)
+    fig.suptitle(heading)
+    save(fig, "02-layer-quantiles")
+
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5), constrained_layout=True)
+    for ax, (edges, probabilities, label) in zip(axes, histograms):
+        ax.stairs(
+            probabilities.mean(axis=0) * 100,
+            edges,
+            color="black",
+            linewidth=2,
+            label=f"All {len(layers)} layers pooled",
+        )
+        for layer in config["example_layers"]:
+            position = int(np.flatnonzero(layers == layer)[0])
+            ax.stairs(
+                probabilities[position] * 100, edges, alpha=0.8, label=f"Layer {layer}"
+            )
+        ax.set(
+            xlabel=label,
+            ylabel="Weight share per bin (%)",
+            title="Selected layers vs pooled distribution",
+        )
+        ax.legend()
+        ax.grid(alpha=0.15)
+    fig.suptitle(
+        heading + "\nEqual-width bins; all weights counted; each curve sums to 100%"
+    )
+    save(fig, "03-distribution-comparison")
+    summary = {
+        "model": model,
+        "family": config["family"],
+        "layer_range": [first, last],
+        "layers": len(layers),
+        "weights_per_layer": weights.shape[1],
+        "total_weights": weights.size,
+        "negative_count": int(np.sum(weights < 0)),
+        "zero_count": int(np.sum(weights == 0)),
+        "raw_min": float(weights.min()),
+        "raw_max": float(weights.max()),
+        "raw_pooled_quantiles": np.quantile(weights, config["quantiles"]).tolist(),
+        "quantiles": config["quantiles"],
+        "per_layer_raw_quantiles": quantiles[0].T.tolist(),
+        "per_layer_relative_quantiles": quantiles[1].T.tolist(),
+    }
+    (output / "summary.json").write_text(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -315,4 +452,8 @@ if __name__ == "__main__":
         default=experiment_configs[0]["name"],
     )
     args = parser.parse_args()
-    plot(next(c for c in experiment_configs if c["name"] == args.name))
+    config = next(c for c in experiment_configs if c["name"] == args.name)
+    if config.get("analysis") == "distributions":
+        plot_distributions(config)
+    else:
+        plot(config)
