@@ -661,6 +661,116 @@ def test_cached_norm_comparison_reads_decoder_scales_with_effective_offset(
         )
 
 
+@pytest.mark.parametrize(
+    "status,content_range,payload",
+    [
+        (206, "bytes 4-7/100", b"norm"),
+        (200, "", b"whole file"),
+        (206, "bytes 0-3/100", b"norm"),
+        (206, "bytes 4-7/100", b"bad"),
+    ],
+)
+def test_norm_range_reader_requires_exact_partial_response(
+    status, content_range, payload
+):
+    import io
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from norm_checkpoint_fetch import read_range
+
+    raw = io.BytesIO(payload)
+    response = SimpleNamespace(
+        status_code=status, headers={"Content-Range": content_range}, raw=raw
+    )
+    session = SimpleNamespace(get=lambda *args, **kwargs: nullcontext(response))
+    if status == 206 and content_range == "bytes 4-7/100" and payload == b"norm":
+        assert read_range(session, "https://example.test/shard", 4, 7) == b"norm"
+    else:
+        with pytest.raises(ValueError):
+            read_range(session, "https://example.test/shard", 4, 7)
+        if status == 200 or content_range != "bytes 4-7/100":
+            assert raw.tell() == 0
+
+
+def test_norm_subset_fetch_preserves_bfloat16_and_skips_projection_bytes(
+    tmp_path, monkeypatch
+):
+    import io
+    import struct
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    import norm_checkpoint_fetch as fetch
+    from safetensors.torch import load_file, save_file
+
+    prefix = "model.language_model.layers"
+    families = ("input_layernorm", "post_attention_layernorm")
+    weights = {
+        f"{prefix}.0.{family}.weight": torch.tensor(
+            [-0.5, 0.0, 0.5], dtype=torch.bfloat16
+        )
+        for family in families
+    }
+    projection = "model.language_model.layers.0.self_attn.q_proj.weight"
+    weights[projection] = torch.ones(8, 8, dtype=torch.bfloat16)
+    source = tmp_path / "source.safetensors"
+    save_file(weights, source)
+    binary = source.read_bytes()
+    size = struct.unpack("<Q", binary[:8])[0]
+    header = json.loads(binary[8 : size + 8])
+    (tmp_path / "config.json").write_text(
+        json.dumps({"text_config": {"num_hidden_layers": 1, "hidden_size": 3}})
+    )
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {name: source.name for name in weights}})
+    )
+    requested = []
+
+    def get(url, headers, **kwargs):
+        lo, hi = map(int, headers["Range"].removeprefix("bytes=").split("-"))
+        requested.append((lo, hi))
+        response = SimpleNamespace(
+            status_code=206,
+            headers={"Content-Range": f"bytes {lo}-{hi}/{len(binary)}"},
+            raw=io.BytesIO(binary[lo : hi + 1]),
+        )
+        return nullcontext(response)
+
+    monkeypatch.setattr(
+        fetch.requests, "Session", lambda: nullcontext(SimpleNamespace(get=get))
+    )
+    monkeypatch.setattr(
+        fetch,
+        "fetch_metadata",
+        lambda config, filename: (tmp_path / filename).read_bytes(),
+    )
+    monkeypatch.setattr(
+        fetch, "hf_hub_url", lambda *args, **kwargs: "https://example.test/shard"
+    )
+    config = {
+        "model": "test/norms",
+        "revision": "pinned",
+        "snapshot": str(tmp_path / "subset"),
+        "prefix": prefix,
+        "text_config_path": ["text_config"],
+        "max_remote_header_bytes": 10000,
+    }
+    fetch.fetch_norm_checkpoint(config, families)
+    subset = load_file(tmp_path / "subset/decoder-norms.safetensors")
+    assert set(subset) == set(weights) - {projection}
+    for name, value in subset.items():
+        assert value.dtype == torch.bfloat16 and torch.equal(value, weights[name])
+    start, end = [size + 8 + i for i in header[projection]["data_offsets"]]
+    assert all(hi < start or lo >= end for lo, hi in requested)
+    before = len(requested)
+    fetch.fetch_norm_checkpoint(config, families)
+    assert len(requested) == before
+    (tmp_path / "subset/decoder-norms.safetensors").write_bytes(b"corrupted")
+    with pytest.raises(ValueError, match="corrupted"):
+        fetch.fetch_norm_checkpoint(config, families)
+
+
 def test_zero_epsilon_is_bitwise_noop_and_nonfinite_values_are_retained():
     values = torch.tensor([[0.0, -0.0, 1e-5, float("nan"), float("inf")]])
     original = values.view(torch.int32).clone()

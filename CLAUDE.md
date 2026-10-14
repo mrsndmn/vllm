@@ -178,10 +178,14 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   scale/concentration, adjacent similarity and all-layer rank correlation) and
   `summary.json` to its configured artifact directory.
 - `experiments/qwen3_mmlu/qwen_norm_compare.py`: CPU-only comparison of the two
-  language decoder RMSNorm scale vectors per layer in cached Qwen checkpoints.
+  language decoder RMSNorm scale vectors per layer in cached Qwen checkpoints
+  plus a pinned Qwen3.5 MoE norm-only subset fetched from Hugging Face.
   Registry pins snapshots, decoder prefixes and Qwen3.5's `1 + w` parameterization;
   emits effective scale NPZs, JSON statistics and four comparison PNGs. It does
-  not read projection, Q/K, vision, audio, talker or MTP weights or download models.
+  not read projection, Q/K, vision, audio, talker or MTP weights. Its
+  `norm_checkpoint_fetch.py` helper downloads metadata and strictly validated
+  HTTP 206 ranges only for selected norm tensors, preserves their original
+  dtype, and verifies subset-cache hashes on reuse; no full model download.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
   batching, and finished-request cleanup; only installed vLLM 0.14.1, eager,
   unquantized Qwen3 MoE on one GPU with its Triton expert implementation.

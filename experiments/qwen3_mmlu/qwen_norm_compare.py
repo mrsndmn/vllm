@@ -120,10 +120,27 @@ experiment_configs = [
         ),
     ]
 ]
+MOE_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"
+experiment_configs.insert(
+    6,
+    dict(
+        experiment_configs[5],
+        model="Qwen/Qwen3.5-35B-A3B",
+        snapshot=str(OUTPUT / "norm-only" / "Qwen3.5-35B-A3B" / MOE_REVISION),
+        revision=MOE_REVISION,
+        fetch_norms=True,
+        max_remote_header_bytes=2_000_000,
+        max_remote_metadata_bytes=2_000_000,
+    ),
+)
 
 
 def read_scales(config):
     """Read just the two decoder scale vectors per layer, without model loading."""
+    if config.get("fetch_norms"):
+        from norm_checkpoint_fetch import fetch_norm_checkpoint
+
+        fetch_norm_checkpoint(config, FAMILIES)
     snapshot = Path(config["snapshot"])
     metadata = json.loads((snapshot / "config.json").read_text())
     for key in config["text_config_path"]:
@@ -240,7 +257,7 @@ def main():
     axes[0].set_yticks(y, labels)
     axes[0].invert_yaxis()
     fig.suptitle(
-        "Cached Qwen decoder norms: effective multiplicative scales\n"
+        "Qwen decoder norms: cached checkpoints + norm-only Qwen3.5 MoE subset\n"
         "Qwen3.5 uses 1 + checkpoint weight; others use checkpoint weight"
     )
     fig.savefig(OUTPUT / "01-similarity-comparison.png", dpi=160, bbox_inches="tight")
@@ -270,7 +287,7 @@ def main():
     axes[0].set_yticks(y, labels)
     axes[0].invert_yaxis()
     fig.suptitle(
-        "Persistent high/low decoder norm coordinates across cached Qwens\n"
+        "Persistent high/low decoder norm coordinates across Qwens\n"
         "Top/bottom decile within each layer in at least 90% of layers; "
         "average tie ranks"
     )
