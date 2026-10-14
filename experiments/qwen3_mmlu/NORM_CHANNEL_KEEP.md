@@ -70,3 +70,7 @@ intervention before considering a larger evaluation.
   in the other follow-up masks.
 - 2026-10-14: Added weighted-RMS restoration, external-routing preservation and
   combined correction arms, using the same mask and preview evaluation protocols.
+- 2026-10-14: Independent adversarial review approved all correction arms; focused
+  tests and installed-vLLM CUDA checks passed. Submitted the correction evaluations
+  and registered durable observation. Job provenance is saved in
+  `run/normkeep-corrections/jobs.json`.
