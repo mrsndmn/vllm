@@ -14,7 +14,8 @@ generation protocol are used for each baseline/intervention pair.
 
 ## Results
 
-Pending preliminary evaluations.
+Paired preliminary evaluations have been submitted through MLSpace. Durable job
+observation is registered; accuracy results are pending.
 
 ## Conclusions
 
@@ -25,3 +26,5 @@ deciding whether a larger evaluation is warranted.
 
 - 2026-10-14: Implemented pinned post-normalization channel masking and paired
   preliminary evaluation configurations.
+- 2026-10-14: Independent review approved the implementation after fixing preview
+  exclusion from full paper tables; submitted the paired preliminary jobs.
