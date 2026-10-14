@@ -261,7 +261,12 @@ def main():
             ax.barh(y + offset, percent, height=0.3, color=colour, label=label)
         ax.set(title=family, xlabel="Share of hidden dimensions (%)")
         ax.grid(axis="x", alpha=0.15)
-        ax.legend(loc="lower right")
+    fig.legend(
+        *axes[0].get_legend_handles_labels(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=2,
+    )
     axes[0].set_yticks(y, labels)
     axes[0].invert_yaxis()
     fig.suptitle(
