@@ -142,13 +142,17 @@ def plot(config):
         low = np.mean(ranks <= config["tail_fraction"], axis=0)
         median = np.median(np.abs(relative), axis=0)
         ax.scatter(high * 100, low * 100, s=12, alpha=0.2, color="#4477aa")
+        annotations = {}
         for dim in np.unique(
             [np.argmax(high), np.argmax(low), np.argmax(median), np.argmin(median)]
         ):
             ax.scatter(high[dim] * 100, low[dim] * 100, s=35, color="#bb3322")
+            position = (high[dim] * 100, low[dim] * 100)
+            annotations.setdefault(position, []).append(str(dim))
+        for position, dimensions in annotations.items():
             ax.annotate(
-                str(dim),
-                (high[dim] * 100, low[dim] * 100),
+                ", ".join(dimensions),
+                position,
                 xytext=(5, 5),
                 textcoords="offset points",
             )
