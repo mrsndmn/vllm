@@ -47,6 +47,18 @@ experiment_configs.append(
         "dpi": 160,
     }
 )
+experiment_configs.append(
+    {
+        "name": "qwen3_post_attention_large_channels",
+        "analysis": "channels",
+        "report": experiment_configs[0]["report"],
+        "output": str(run.ARTIFACTS / "weight-viz/post-attention-large-channels"),
+        "family": "post_attention_layernorm",
+        "layer_range": [4, 44],
+        "relative_threshold": 1.0,
+        "dpi": 160,
+    }
+)
 
 
 def load_norms(report):
@@ -444,6 +456,104 @@ def plot_distributions(config):
     print(json.dumps(summary, indent=2))
 
 
+def channel_occupancy(relative, threshold):
+    """Count layers per channel using the inclusive signed weight threshold."""
+    return np.sum(relative >= threshold, axis=0)
+
+
+def plot_channels(config):
+    """Plot threshold occupancy by channel and its discrete distribution."""
+    model, norms = load_norms(config["report"])
+    layers, _, _, relative = norms[config["family"]]
+    first, last = config["layer_range"]
+    selected = (layers >= first) & (layers <= last)
+    layers, relative = layers[selected], relative[selected]
+    if not np.array_equal(layers, np.arange(first, last + 1)):
+        raise ValueError("Requested layer range has missing normalization tensors")
+    threshold = config["relative_threshold"]
+    counts = channel_occupancy(relative, threshold)
+    common = counts == len(layers)
+    union = counts > 0
+    per_layer = np.sum(relative >= threshold, axis=1)
+    histogram = np.bincount(counts, minlength=len(layers) + 1)
+    output = Path(config["output"])
+    output.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "model": model,
+        "family": config["family"],
+        "layer_range": [first, last],
+        "layer_count": len(layers),
+        "total_channels": len(counts),
+        "signed_relative_threshold": threshold,
+        "channels_in_any_layer": int(union.sum()),
+        "channels_in_every_layer": int(common.sum()),
+        "common_share_of_all_channels": float(common.mean()),
+        "common_share_of_union": float(common.sum() / union.sum())
+        if union.any()
+        else None,
+        "channel_layer_hits": int(counts.sum()),
+        "per_layer_counts": per_layer.tolist(),
+        "occupancy_histogram": histogram.tolist(),
+    }
+    (output / "summary.json").write_text(json.dumps(summary, indent=2))
+    np.savetxt(
+        output / "channel-occupancy.csv",
+        np.column_stack([np.arange(len(counts)), counts, common]),
+        delimiter=",",
+        fmt="%d",
+        header="channel,layers_at_or_above_threshold,in_every_layer",
+        comments="",
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6), constrained_layout=True)
+    channels = np.arange(len(counts))
+    axes[0].scatter(
+        channels[~common], counts[~common], s=7, alpha=0.45, color="#4477aa"
+    )
+    axes[0].scatter(
+        channels[common],
+        counts[common],
+        s=10,
+        color="#bb3322",
+        label=f"All {len(layers)} layers: {common.sum()} channels",
+    )
+    axes[0].axhline(len(layers), color="#bb3322", linestyle="--", linewidth=0.7)
+    axes[0].set(
+        xlabel="Hidden channel (0-based)",
+        ylabel="Number of layers with signed weight / RMS ≥ threshold",
+        title="Occupancy of each hidden channel",
+        ylim=(-1, len(layers) + 2),
+    )
+    axes[0].legend(loc="lower right")
+    colours = ["#4477aa"] * len(histogram)
+    colours[-1] = "#bb3322"
+    axes[1].bar(np.arange(len(histogram)), histogram, color=colours)
+    axes[1].set(
+        xlabel="Number of qualifying layers",
+        ylabel="Number of channels",
+        title=f"Discrete distribution across all {len(counts)} channels",
+    )
+    axes[1].annotate(
+        str(common.sum()),
+        (len(layers), histogram[-1]),
+        xytext=(0, 5),
+        textcoords="offset points",
+        ha="center",
+    )
+    for ax in axes:
+        ax.grid(axis="y", alpha=0.15)
+    fig.suptitle(
+        f"{model}\n{config['family']} · layers {first}–{last} inclusive "
+        f"· signed weight / layer RMS ≥ {threshold:g}\n"
+        f"Union: {union.sum()} channels; intersection: {common.sum()} "
+        f"({common.mean():.2%} of all channels)"
+    )
+    fig.savefig(
+        output / "channel-occupancy.png", dpi=config["dpi"], bbox_inches="tight"
+    )
+    plt.close(fig)
+    print(json.dumps(summary, indent=2))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -455,5 +565,7 @@ if __name__ == "__main__":
     config = next(c for c in experiment_configs if c["name"] == args.name)
     if config.get("analysis") == "distributions":
         plot_distributions(config)
+    elif config.get("analysis") == "channels":
+        plot_channels(config)
     else:
         plot(config)

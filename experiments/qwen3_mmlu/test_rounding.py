@@ -624,6 +624,15 @@ def test_norm_layer_similarity_separates_scale_sign_and_coordinate_order():
     assert np.isnan(constant).all()
 
 
+def test_norm_channel_occupancy_uses_inclusive_signed_threshold_across_layers():
+    from norm_weight_analysis import channel_occupancy
+
+    relative = np.array(
+        [[1.0, 1.2, 0.9, -2.0], [1.0, 0.8, 1.1, -3.0], [1.0, 1.3, 0.7, -1.0]]
+    )
+    np.testing.assert_array_equal(channel_occupancy(relative, 1), [3, 2, 1, 0])
+
+
 @pytest.mark.parametrize("offset", [0, 1])
 @pytest.mark.parametrize(
     "families",

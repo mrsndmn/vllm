@@ -180,6 +180,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   `--name qwen3_post_attention_distributions` writes per-layer full-range raw and
   relative histograms, exact quantile bands and pooled/example-layer comparisons
   for the registry's post-attention layer range, plus a separate summary JSON.
+  `--name qwen3_post_attention_large_channels` counts inclusive signed relative
+  threshold hits per channel, plots occupancy and its histogram, and writes
+  union/intersection statistics plus a channel CSV for the configured layer range.
 - `experiments/qwen3_mmlu/qwen_norm_compare.py`: CPU-only comparison of the two
   decoder norm scale vectors per layer in Qwen and OLMo checkpoints. Additional
   models use pinned norm-only subsets fetched from Hugging Face.
