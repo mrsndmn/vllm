@@ -624,6 +624,43 @@ def test_norm_layer_similarity_separates_scale_sign_and_coordinate_order():
     assert np.isnan(constant).all()
 
 
+@pytest.mark.parametrize("offset", [0, 1])
+def test_cached_norm_comparison_reads_decoder_scales_with_effective_offset(
+    tmp_path, offset
+):
+    from qwen_norm_compare import FAMILIES, read_scales
+    from safetensors.torch import save_file
+
+    prefix = "model.language_model.layers"
+    weights = {
+        f"{prefix}.{layer}.{family}.weight": torch.tensor([-0.5, 0.0, 0.5])
+        for layer in range(2)
+        for family in FAMILIES
+    }
+    weights["model.visual.layers.0.input_layernorm.weight"] = torch.ones(7)
+    weights[f"{prefix}.0.self_attn.q_norm.weight"] = torch.ones(2)
+    save_file(weights, tmp_path / "norms.safetensors")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {n: "norms.safetensors" for n in weights}})
+    )
+    (tmp_path / "config.json").write_text(
+        json.dumps({"text_config": {"num_hidden_layers": 2, "hidden_size": 3}})
+    )
+    scales = read_scales(
+        {
+            "snapshot": str(tmp_path),
+            "prefix": prefix,
+            "text_config_path": ["text_config"],
+            "weight_offset": offset,
+        }
+    )
+    assert set(scales) == set(FAMILIES)
+    for array in scales.values():
+        np.testing.assert_array_equal(
+            array, np.tile(np.array([-0.5, 0.0, 0.5]) + offset, (2, 1))
+        )
+
+
 def test_zero_epsilon_is_bitwise_noop_and_nonfinite_values_are_retained():
     values = torch.tensor([[0.0, -0.0, 1e-5, float("nan"), float("inf")]])
     original = values.view(torch.int32).clone()
