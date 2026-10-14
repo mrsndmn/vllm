@@ -178,7 +178,9 @@ def generate(pattern, tables, artifacts):
     configs = [
         c
         for c in run.experiment_configs
-        if fnmatch.fnmatchcase(c["name"], pattern) and not c.get("chat_reference")
+        if fnmatch.fnmatchcase(c["name"], pattern)
+        and not c.get("chat_reference")
+        and c.get("evaluation_limit") is None
     ]
     for config in configs:
         marker = run.job_root(config["name"], None) / "done.json"

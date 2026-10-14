@@ -2837,6 +2837,24 @@ def paper_module(name):
     return module
 
 
+def test_paper_collector_excludes_preview_baselines_before_reading_samples(
+    tmp_path, monkeypatch
+):
+    module = paper_module("token_lengths")
+    config = next(
+        c
+        for c in run.experiment_configs
+        if c["name"] == "normkeep_preview_mmlu_baseline"
+    )
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    monkeypatch.setattr(run, "experiment_configs", [config])
+    marker = run.job_root(config["name"], None) / "done.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({"output": str(tmp_path / "partial-results")}))
+    with pytest.raises(ValueError, match="No completed generative runs"):
+        module.generate("*baseline*", tmp_path / "tables", tmp_path / "artifacts")
+
+
 def test_paper_lengths_include_forced_answer_but_not_injected_suffix():
     module = paper_module("token_lengths")
     config = dict(name="gsm8k_baseline", task="gsm8k_chat", chat_expected_questions=2)
