@@ -26,7 +26,8 @@ against the individual saved records. Comparison artifacts are saved under
 `run/normkeep-preview/results.json` and `run/normkeep-preview/results.csv`.
 
 Follow-up masks with greater channel retention are defined in the same registry;
-their preliminary evaluations will reuse the original matched baselines.
+their preliminary evaluations reuse the original matched baselines. All follow-up
+jobs have been submitted, with durable observation registered; results are pending.
 
 ## Conclusions
 
@@ -45,3 +46,5 @@ scope or soften the intervention before considering a larger evaluation.
   recorded complete generation collapse under the intervention.
 - 2026-10-14: Added larger-retention follow-up configurations with pinned masks
   and unchanged question selection and generation protocols.
+- 2026-10-14: Independent review approved the follow-up configurations; submitted
+  all follow-up evaluations concurrently and registered durable observation.
