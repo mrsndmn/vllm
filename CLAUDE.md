@@ -178,9 +178,12 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   scale/concentration, adjacent similarity and all-layer rank correlation) and
   `summary.json` to its configured artifact directory.
 - `experiments/qwen3_mmlu/qwen_norm_compare.py`: CPU-only comparison of the two
-  language decoder RMSNorm scale vectors per layer in cached Qwen checkpoints
-  plus a pinned Qwen3.5 MoE norm-only subset fetched from Hugging Face.
-  Registry pins snapshots, decoder prefixes and Qwen3.5's `1 + w` parameterization;
+  decoder norm scale vectors per layer in Qwen and OLMo checkpoints. Additional
+  models use pinned norm-only subsets fetched from Hugging Face.
+  Registry pins snapshots, decoder prefixes, actual norm family names, pre/post
+  branch layout and Qwen3.5's `1 + w` parameterization. Plot columns use attention
+  and FFN roles; OLMo 2/3 normalize branch outputs before residual addition,
+  while Qwen/OLMoE normalize branch inputs. Dynamic grids include every model;
   emits effective scale NPZs, JSON statistics and four comparison PNGs. It does
   not read projection, Q/K, vision, audio, talker or MTP weights. Its
   `norm_checkpoint_fetch.py` helper downloads metadata and strictly validated

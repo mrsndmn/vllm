@@ -625,17 +625,24 @@ def test_norm_layer_similarity_separates_scale_sign_and_coordinate_order():
 
 
 @pytest.mark.parametrize("offset", [0, 1])
+@pytest.mark.parametrize(
+    "families",
+    [
+        ("input_layernorm", "post_attention_layernorm"),
+        ("post_attention_layernorm", "post_feedforward_layernorm"),
+    ],
+)
 def test_cached_norm_comparison_reads_decoder_scales_with_effective_offset(
-    tmp_path, offset
+    tmp_path, offset, families
 ):
-    from qwen_norm_compare import FAMILIES, read_scales
+    from qwen_norm_compare import read_scales
     from safetensors.torch import save_file
 
     prefix = "model.language_model.layers"
     weights = {
         f"{prefix}.{layer}.{family}.weight": torch.tensor([-0.5, 0.0, 0.5])
         for layer in range(2)
-        for family in FAMILIES
+        for family in families
     }
     weights["model.visual.layers.0.input_layernorm.weight"] = torch.ones(7)
     weights[f"{prefix}.0.self_attn.q_norm.weight"] = torch.ones(2)
@@ -652,9 +659,10 @@ def test_cached_norm_comparison_reads_decoder_scales_with_effective_offset(
             "prefix": prefix,
             "text_config_path": ["text_config"],
             "weight_offset": offset,
+            "families": families,
         }
     )
-    assert set(scales) == set(FAMILIES)
+    assert tuple(scales) == families
     for array in scales.values():
         np.testing.assert_array_equal(
             array, np.tile(np.array([-0.5, 0.0, 0.5]) + offset, (2, 1))

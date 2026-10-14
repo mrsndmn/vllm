@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-"""Compare only decoder RMSNorm scales of locally cached Qwen checkpoints."""
+"""Compare decoder norm scales from cached and norm-only Qwen/OLMo checkpoints."""
 
 import json
 from collections import defaultdict
@@ -18,6 +18,7 @@ CACHE = Path("/workspace-SR004.nfs2/.cache/huggingface/hub")
 LOCAL_CACHE = Path("/home/jovyan/.cache/huggingface/hub")
 OUTPUT = run.ARTIFACTS / "weight-viz/qwen-norm-comparison"
 FAMILIES = ("input_layernorm", "post_attention_layernorm")
+ROLES = ("Attention branch norm", "FFN branch norm")
 experiment_configs = [
     {
         "model": "Qwen/" + model,
@@ -25,6 +26,8 @@ experiment_configs = [
         "prefix": prefix,
         "text_config_path": config_path,
         "weight_offset": offset,
+        "families": FAMILIES,
+        "norm_layout": "pre",
         "tail_fraction": 0.1,
         "persistent_fraction": 0.9,
         "dpi": 160,
@@ -133,23 +136,72 @@ experiment_configs.insert(
         max_remote_metadata_bytes=2_000_000,
     ),
 )
+experiment_configs.extend(
+    dict(
+        experiment_configs[0],
+        model=model,
+        snapshot=str(OUTPUT / "norm-only" / model.split("/")[-1] / revision),
+        revision=revision,
+        families=families,
+        norm_layout=layout,
+        fetch_norms=True,
+        max_remote_header_bytes=2_000_000,
+        max_remote_metadata_bytes=2_000_000,
+    )
+    for model, revision, families, layout in [
+        (
+            "allenai/OLMoE-1B-7B-0924",
+            "6d84c48581ece794365f2b8e9cfb043c68ade9c5",
+            FAMILIES,
+            "pre",
+        ),
+        (
+            "allenai/OLMo-2-1124-7B",
+            "7df9a82518afdecae4e8c026b27adccc8c1f0032",
+            ("post_attention_layernorm", "post_feedforward_layernorm"),
+            "post",
+        ),
+        (
+            "allenai/OLMo-2-0325-32B",
+            "cc9d3cf9c7230b86ee6b84607b37db1c01e3f1ed",
+            ("post_attention_layernorm", "post_feedforward_layernorm"),
+            "post",
+        ),
+        (
+            "allenai/Olmo-3-7B-Instruct",
+            "6e5971d9eba42665f5bd5a0fcf047f299ce1dccc",
+            ("post_attention_layernorm", "post_feedforward_layernorm"),
+            "post",
+        ),
+    ]
+)
+
+
+def norm_families(config):
+    """Return attention/FFN norm names in role order, retaining their actual names."""
+    return tuple(config.get("families", FAMILIES))
+
+
+def role_stats(row, role):
+    return row["families"][norm_families(row["config"])[role]]
 
 
 def read_scales(config):
     """Read just the two decoder scale vectors per layer, without model loading."""
+    families = norm_families(config)
     if config.get("fetch_norms"):
         from norm_checkpoint_fetch import fetch_norm_checkpoint
 
-        fetch_norm_checkpoint(config, FAMILIES)
+        fetch_norm_checkpoint(config, families)
     snapshot = Path(config["snapshot"])
     metadata = json.loads((snapshot / "config.json").read_text())
     for key in config["text_config_path"]:
         metadata = metadata[key]
     depth, width = metadata["num_hidden_layers"], metadata["hidden_size"]
     index = json.loads((snapshot / "model.safetensors.index.json").read_text())
-    arrays = {family: np.empty((depth, width)) for family in FAMILIES}
+    arrays = {family: np.empty((depth, width)) for family in families}
     shards = defaultdict(list)
-    for family in FAMILIES:
+    for family in families:
         for layer in range(depth):
             name = f"{config['prefix']}.{layer}.{family}.weight"
             shards[index["weight_map"][name]].append((family, layer, name))
@@ -216,11 +268,18 @@ def main():
         name = config["model"].split("/")[-1]
         np.savez_compressed(OUTPUT / f"{name}-effective-scales.npz", **weights)
     (OUTPUT / "comparison.json").write_text(json.dumps(results, indent=2))
-    labels = [row["config"]["model"].removeprefix("Qwen/") for row in results]
+    labels = [
+        r["config"]["model"].split("/")[-1] + f" [{r['config']['norm_layout']}]"
+        for r in results
+    ]
     y = np.arange(len(labels))
     colours = ["#225588", "#cc7722"]
     fig, axes = plt.subplots(
-        1, 3, figsize=(16, 8), sharey=True, constrained_layout=True
+        1,
+        3,
+        figsize=(16, max(8, len(labels) * 0.6)),
+        sharey=True,
+        constrained_layout=True,
     )
     for ax, metric, title in zip(
         axes,
@@ -231,8 +290,8 @@ def main():
             "Every layer pair: magnitude Spearman",
         ],
     ):
-        for family, offset, colour in zip(FAMILIES, [-0.13, 0.13], colours):
-            stats = [r["families"][family][metric] for r in results]
+        for role, offset, colour in zip(range(2), [-0.13, 0.13], colours):
+            stats = [role_stats(r, role)[metric] for r in results]
             med = np.array([s["median"] if s else np.nan for s in stats])
             lower = np.array([s["p10"] if s else np.nan for s in stats])
             upper = np.array([s["p90"] if s else np.nan for s in stats])
@@ -243,40 +302,50 @@ def main():
                 fmt="o",
                 color=colour,
                 capsize=3,
-                label=family,
+                label=ROLES[role],
             )
         limits = (-1.02, 1.02)
         if metric == "adjacent_cosine":
             lower_bound = min(
-                r["families"][f][metric]["p10"] for r in results for f in FAMILIES
+                role_stats(r, role)[metric]["p10"] for r in results for role in range(2)
             )
             limits = (lower_bound - 0.02, 1.005)
         ax.set(title=title, xlabel="Median and 10–90% of layer pairs", xlim=limits)
         ax.grid(alpha=0.15)
-        ax.legend(loc="lower left", fontsize=9)
+    fig.legend(
+        *axes[0].get_legend_handles_labels(),
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.05),
+        ncol=2,
+    )
     axes[0].set_yticks(y, labels)
     axes[0].invert_yaxis()
     fig.suptitle(
-        "Qwen decoder norms: cached checkpoints + norm-only Qwen3.5 MoE subset\n"
-        "Qwen3.5 uses 1 + checkpoint weight; others use checkpoint weight"
+        "Qwen + OLMo decoder norm scales: local weights and norm-only subsets\n"
+        "[pre]: before branch; [post]: branch output before residual addition\n"
+        "Qwen3.5 uses 1 + checkpoint weight; other models use checkpoint weight"
     )
     fig.savefig(OUTPUT / "01-similarity-comparison.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
     fig, axes = plt.subplots(
-        1, 2, figsize=(14, 8), sharey=True, constrained_layout=True
+        1,
+        2,
+        figsize=(14, max(8, len(labels) * 0.6)),
+        sharey=True,
+        constrained_layout=True,
     )
-    for ax, family in zip(axes, FAMILIES):
+    for role, ax in enumerate(axes):
         for key, offset, colour, label in [
             ("persistent_top_count", -0.16, "#228866", "Persistently in top 10%"),
             ("persistent_bottom_count", 0.16, "#994477", "Persistently in bottom 10%"),
         ]:
             percent = [
-                100 * r["families"][family][key] / r["families"][family]["hidden_size"]
+                100 * role_stats(r, role)[key] / role_stats(r, role)["hidden_size"]
                 for r in results
             ]
             ax.barh(y + offset, percent, height=0.3, color=colour, label=label)
-        ax.set(title=family, xlabel="Share of hidden dimensions (%)")
+        ax.set(title=ROLES[role], xlabel="Share of hidden dimensions (%)")
         ax.grid(axis="x", alpha=0.15)
     fig.legend(
         *axes[0].get_legend_handles_labels(),
@@ -287,28 +356,35 @@ def main():
     axes[0].set_yticks(y, labels)
     axes[0].invert_yaxis()
     fig.suptitle(
-        "Persistent high/low decoder norm coordinates across Qwens\n"
+        "Persistent high/low decoder norm coordinates: Qwen + OLMo\n"
         "Top/bottom decile within each layer in at least 90% of layers; "
-        "average tie ranks"
+        "average tie ranks\n"
+        "[pre]: before branch; [post]: branch output before residual addition"
     )
     fig.savefig(OUTPUT / "02-persistence-comparison.png", dpi=160, bbox_inches="tight")
     plt.close(fig)
 
-    for family in FAMILIES:
-        fig, axes = plt.subplots(4, 3, figsize=(14, 16), constrained_layout=True)
-        for ax, label, maps in zip(axes.flat, labels, matrices):
+    rows = (len(labels) + 2) // 3
+    for role in range(2):
+        fig, axes = plt.subplots(
+            rows, 3, figsize=(14, rows * 4), constrained_layout=True, squeeze=False
+        )
+        for ax, label, maps, result in zip(axes.flat, labels, matrices, results):
+            family = norm_families(result["config"])[role]
             im = ax.imshow(maps[family], vmin=-1, vmax=1, cmap="RdBu_r")
-            ax.set(title=label, xlabel="Layer", ylabel="Layer")
+            ax.set(title=label + "\n" + family, xlabel="Layer", ylabel="Layer")
         for ax in list(axes.flat)[len(labels) :]:
             ax.set_visible(False)
         fig.colorbar(
             im, ax=list(axes.flat), shrink=0.8, label="Spearman of effective |scales|"
         )
         fig.suptitle(
-            f"{family}: all-layer coordinate-order similarity\n"
+            f"{ROLES[role]}: all-layer coordinate-order similarity\n"
+            "[pre]: before branch; [post]: branch output before residual addition\n"
             "Language decoder only; no vision, audio, talker, Q/K or MTP norms"
         )
-        fig.savefig(OUTPUT / f"03-{family}-rank-maps.png", dpi=160, bbox_inches="tight")
+        name = "attention_norm" if role == 0 else "ffn_norm"
+        fig.savefig(OUTPUT / f"03-{name}-rank-maps.png", dpi=160, bbox_inches="tight")
         plt.close(fig)
 
 
