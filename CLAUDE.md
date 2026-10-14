@@ -111,6 +111,15 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   entry point; serves one `launcher="mls"` registry row as a subprocess (no tmux),
   evaluates, stops the server, and writes `jobs/<row>/done.json` last
   (`jobs-smoke/limitN/<row>/` for smoke runs).
+  Registry `evaluation_limit` supplies a quick subset when no CLI limit is set.
+- `normkeep_preview_*` registry rows: matched short MMLU STEM/GSM8K baseline
+  and channel-mask evaluations. `post_norm_channels.apply` derives and hash-checks
+  the fixed common-channel mask from loaded post-attention RMSNorm weights,
+  masks only normalized outputs before MoE routing and preserves residuals.
+  The wrapper accepts `--post-norm-channels`; `/rounding/config` exposes the mask
+  and report, and serving/eval matching rejects a different intervention.
+  Full-run `chat_eval.py summarize` skips registry rows with `evaluation_limit`;
+  compare these preview results against their matched preview baseline.
 - `/home/jovyan/.mlspace/envs/arkhip/bin/python
   experiments/qwen3_mmlu/run_jobs.py [--dry] [--filter S] [--limit N] [--force]`:
   submits one `a100.1gpu` job per pending row (`--filter` is a name glob, e.g.

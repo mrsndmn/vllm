@@ -633,6 +633,92 @@ def test_norm_channel_occupancy_uses_inclusive_signed_threshold_across_layers():
     np.testing.assert_array_equal(channel_occupancy(relative, 1), [3, 2, 1, 0])
 
 
+def test_post_norm_mask_zeros_only_selected_normalized_outputs_and_preserves_residual():
+    import hashlib
+    from types import SimpleNamespace
+
+    from post_norm_channels import apply
+
+    class Norm(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([1.0, 2.0, 3.0, 4.0]))
+
+        def forward(self, hidden, residual=None):
+            output = hidden * self.weight
+            return output if residual is None else (output, residual)
+
+    norms = [Norm() for _ in range(3)]
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            layers=[SimpleNamespace(post_attention_layernorm=n) for n in norms]
+        ),
+        config=SimpleNamespace(hidden_size=4),
+    )
+    config = dict(
+        first_layer=1,
+        last_layer=2,
+        threshold=1.0,
+        expected_kept=2,
+        mask_sha256=hashlib.sha256(bytes([0, 0, 1, 1])).hexdigest(),
+    )
+    report = apply(model, config)
+    assert report["kept_channels"] == [2, 3]
+    assert report["layers"] == [1, 2]
+    hidden = torch.ones(2, 4)
+    residual = torch.full((2, 4), 7.0)
+    original_hidden, original_residual = hidden.clone(), residual.clone()
+    assert torch.equal(
+        norms[0](hidden), torch.tensor([[1.0, 2.0, 3.0, 4.0]]).expand(2, 4)
+    )
+    for norm in norms[1:]:
+        output, returned_residual = norm(hidden, residual)
+        assert torch.equal(output, torch.tensor([[0.0, 0.0, 3.0, 4.0]]).expand(2, 4))
+        assert returned_residual is residual
+        assert torch.equal(norm(hidden), output)
+    assert torch.equal(hidden, original_hidden)
+    assert torch.equal(residual, original_residual)
+    with pytest.raises(ValueError, match="pinned"):
+        apply(model, dict(config, expected_kept=3))
+
+
+def test_normkeep_registry_pairs_protocols_and_checks_served_mask(monkeypatch):
+    rows = [
+        c for c in run.experiment_configs if c["name"].startswith("normkeep_preview_")
+    ]
+    assert len(rows) == 4
+    for task in ("mmlu", "gsm8k"):
+        baseline = next(
+            c for c in rows if c["name"] == f"normkeep_preview_{task}_baseline"
+        )
+        masked = next(
+            c for c in rows if c["name"] == f"normkeep_preview_{task}_keep604"
+        )
+        assert {k: v for k, v in baseline.items() if k != "name"} == {
+            k: v for k, v in masked.items() if k not in ("name", "post_norm_channels")
+        }
+        monkeypatch.setattr(run, "CONFIG", dict(masked))
+        cmd = run.rounding_args()
+        assert (
+            json.loads(cmd[cmd.index("--post-norm-channels") + 1])
+            == run.NORM_CHANNEL_MASK
+        )
+        actual = dict(site="mlp", epsilon=0.0, quantile=0.0)
+        assert run.config_mismatch(actual)
+        assert not run.config_mismatch(
+            dict(actual, post_norm_channels=run.NORM_CHANNEL_MASK)
+        )
+
+
+def test_full_run_summary_skips_preview_question_sets(tmp_path, monkeypatch):
+    monkeypatch.setattr(run, "ARTIFACTS", tmp_path)
+    name = "normkeep_preview_mmlu_baseline"
+    marker = run.job_root(name, None) / "done.json"
+    marker.parent.mkdir(parents=True)
+    marker.write_text(json.dumps({"output": str(tmp_path / "partial-results")}))
+    assert chat_eval.finished_runs("normkeep_preview_*", chat_eval.TASK) == {}
+
+
 @pytest.mark.parametrize("offset", [0, 1])
 @pytest.mark.parametrize(
     "families",
@@ -978,7 +1064,9 @@ def test_registry_is_generative_only():
     names = [c["name"] for c in run.experiment_configs]
     assert len(names) == len(set(names)) == len(run_jobs.job_configs())
     for config in run.experiment_configs:
-        assert config["name"].startswith(("chat_", "prof_", "gsm8k_", "suite_"))
+        assert config["name"].startswith(
+            ("chat_", "prof_", "gsm8k_", "suite_", "normkeep_preview_")
+        )
         if config["task"] == gsm8k.TASK:
             assert "chat_subjects" not in config and "chat_per_subject" not in config
             assert config["chat_expected_questions"] == 1319

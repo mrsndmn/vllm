@@ -55,6 +55,12 @@ def main():
     parser.add_argument(
         "--mlp-weight-rounding", type=lambda text: validate_mlp_config(json.loads(text))
     )
+    from post_norm_channels import validate_config as validate_norm_channels
+
+    parser.add_argument(
+        "--post-norm-channels",
+        type=lambda text: validate_norm_channels(json.loads(text)),
+    )
     args, server_args = parser.parse_known_args()
     if args.round_activations_replacement != "zero" and (
         args.round_activations_site != "mlp"
@@ -77,6 +83,9 @@ def main():
     connect(args.rounding_db).close()
     os.environ.update(
         {
+            "POST_NORM_CHANNELS": json.dumps(args.post_norm_channels)
+            if args.post_norm_channels
+            else "",
             "ROUND_ACTIVATIONS_REPLACEMENT": args.round_activations_replacement,
             "MLP_WEIGHT_ROUNDING": json.dumps(args.mlp_weight_rounding)
             if args.mlp_weight_rounding

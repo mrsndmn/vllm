@@ -425,6 +425,32 @@ experiment_configs += [
 ]
 
 
+NORM_CHANNEL_MASK = dict(
+    first_layer=4,
+    last_layer=44,
+    threshold=1.0,
+    expected_kept=604,
+    mask_sha256="444ac2a54fe9a671be9ad4d541be6c5b509409e04a436288179ee70c9efec6a5",
+)
+for task, baseline_name, limit in (
+    ("mmlu", "chat_baseline", 4),
+    ("gsm8k", "gsm8k_baseline", 64),
+):
+    baseline = next(c for c in experiment_configs if c["name"] == baseline_name)
+    for arm in ("baseline", "keep604"):
+        experiment_configs.append(
+            dict(
+                baseline,
+                name=f"normkeep_preview_{task}_{arm}",
+                evaluation_limit=limit,
+                **(
+                    {"post_norm_channels": NORM_CHANNEL_MASK.copy()}
+                    if arm == "keep604"
+                    else {}
+                ),
+            )
+        )
+
 for row in experiment_configs:
     if row["task"].startswith("ruler_"):
         row.update(
@@ -599,6 +625,8 @@ def rounding_args():
         args += ["--mlp-weight-rounding", json.dumps(CONFIG["mlp_weight_rounding"])]
     if CONFIG.get("weight_zeroing"):
         args += ["--weight-zeroing", json.dumps(CONFIG["weight_zeroing"])]
+    if CONFIG.get("post_norm_channels"):
+        args += ["--post-norm-channels", json.dumps(CONFIG["post_norm_channels"])]
     return args
 
 
@@ -612,6 +640,7 @@ def config_mismatch(actual):
         != CONFIG.get("round_activations_replacement", "zero")
         or actual.get("mlp_weight_rounding") != CONFIG.get("mlp_weight_rounding")
         or actual.get("weight_zeroing") != CONFIG.get("weight_zeroing")
+        or actual.get("post_norm_channels") != CONFIG.get("post_norm_channels")
     )
 
 
@@ -636,6 +665,8 @@ def wait_ready(alive=session_exists):
 
 def evaluate(limit, output=None):
     """Run the configured generative benchmark against the matching server."""
+    if limit is None:
+        limit = CONFIG.get("evaluation_limit")
     extended = CONFIG["task"] in BENCHMARK_CONFIGS
     if CONFIG["task"] not in ("mmlu_stem_chat", "gsm8k_chat") and not extended:
         raise RuntimeError("Only generative evaluation is supported (ADR 0004)")
@@ -705,6 +736,7 @@ def select(name):
 def job(name, limit):
     """MLSpace container entry point: serve one registry row, evaluate, stop."""
     select(name)
+    evaluation_limit = limit if limit is not None else CONFIG.get("evaluation_limit")
     root = job_root(name, limit)
     attempt = root / time.strftime("%Y%m%d-%H%M%S")
     attempt.mkdir(parents=True)
@@ -731,7 +763,7 @@ def job(name, limit):
                 smoke_output = evaluate(
                     len(CONFIG["benchmark"]["subtasks"]), attempt / "ruler-smoke"
                 )
-            output = evaluate(limit, attempt / task_dir)
+            output = evaluate(evaluation_limit, attempt / task_dir)
         finally:
             server.send_signal(signal.SIGINT)
             try:
@@ -749,6 +781,10 @@ def job(name, limit):
         "output": str(output),
     } | ({"limit": limit} if limit else {})
     marker["replacement"] = CONFIG.get("round_activations_replacement", "zero")
+    if evaluation_limit is not None:
+        marker["evaluation_limit"] = evaluation_limit
+    if CONFIG.get("post_norm_channels"):
+        marker["post_norm_channels"] = CONFIG["post_norm_channels"]
     if CONFIG.get("mlp_weight_rounding"):
         marker["mlp_weight_rounding"] = CONFIG["mlp_weight_rounding"]
     if smoke_output is not None:

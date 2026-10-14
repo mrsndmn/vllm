@@ -26,6 +26,8 @@ class RoundingMiddleware:
         self.quantiles = json.loads(schedule) if schedule else None
         weights = os.environ.get("EMBEDDING_WEIGHT_ZEROING")
         self.weight_zeroing = json.loads(weights) if weights else None
+        channels = os.environ.get("POST_NORM_CHANNELS")
+        self.post_norm_channels = json.loads(channels) if channels else None
 
     async def stats(self, response_id=None):
         result = await asyncio.to_thread(
@@ -60,6 +62,11 @@ class RoundingMiddleware:
                     result["mlp_weight_rounding"] = self.mlp_weight_rounding
                     result["mlp_weight_rounding_report"] = json.loads(
                         Path(self.path).with_suffix(".mlp-weights.json").read_text()
+                    )
+                if self.post_norm_channels:
+                    result["post_norm_channels"] = self.post_norm_channels
+                    result["post_norm_channels_report"] = json.loads(
+                        Path(self.path).with_suffix(".norm-channels.json").read_text()
                     )
                 if self.weight_zeroing:
                     result["weight_zeroing"] = self.weight_zeroing

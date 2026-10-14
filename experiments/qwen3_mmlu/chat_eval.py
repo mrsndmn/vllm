@@ -322,6 +322,8 @@ def finished_runs(pattern="*", task=TASK):
     runs = {}
     for config in run.experiment_configs:
         name = config.get("name", "")
+        if config.get("evaluation_limit") is not None:
+            continue
         marker = run.job_root(name, None) / "done.json"
         if config.get("task") != task or not fnmatch.fnmatchcase(name, pattern):
             continue

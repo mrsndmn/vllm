@@ -69,6 +69,16 @@ class RoundingWorker(Worker):
             raise ValueError("Signed epsilon supports uniform MLP quantiles only")
         self.fields = FIELDS if self.replacement == "zero" else REPLACEMENT_FIELDS
         self.stats_db = connect(os.environ["ROUND_ACTIVATIONS_DB"])
+        norm_channels = os.environ.get("POST_NORM_CHANNELS")
+        if norm_channels:
+            from post_norm_channels import apply as apply_norm_channels
+
+            report = apply_norm_channels(model, json.loads(norm_channels))
+            path = Path(os.environ["ROUND_ACTIVATIONS_DB"]).with_suffix(
+                ".norm-channels.json"
+            )
+            path.write_text(json.dumps(report, indent=2) + "\n")
+            print(f"Post-norm channel mask report: {path}", flush=True)
         weight_config = os.environ.get("EMBEDDING_WEIGHT_ZEROING")
         if weight_config:
             from embedding_zeroing import apply
