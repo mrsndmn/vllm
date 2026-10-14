@@ -473,6 +473,29 @@ for task, baseline_name, limit in (
             )
         )
 
+for task in ("mmlu", "gsm8k"):
+    base = next(
+        c
+        for c in experiment_configs
+        if c["name"] == f"normkeep_preview_{task}_keep1980"
+    )
+    for correction, rescale, preserve in (
+        ("rms", True, False),
+        ("router", False, True),
+        ("rms_router", True, True),
+    ):
+        experiment_configs.append(
+            dict(
+                base,
+                name=base["name"] + "_" + correction,
+                post_norm_channels=dict(
+                    base["post_norm_channels"],
+                    rescale_rms=rescale,
+                    preserve_routing=preserve,
+                ),
+            )
+        )
+
 for row in experiment_configs:
     if row["task"].startswith("ruler_"):
         row.update(

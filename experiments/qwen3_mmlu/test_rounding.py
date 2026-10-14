@@ -682,11 +682,112 @@ def test_post_norm_mask_zeros_only_selected_normalized_outputs_and_preserves_res
         apply(model, dict(config, expected_kept=3))
 
 
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_norm_mask_rescaling_preserves_token_energy_and_handles_zero_survivors(dtype):
+    from post_norm_channels import mask_values
+
+    hidden = torch.tensor(
+        [[1.0, 2.0, 3.0, 4.0], [3.0, 4.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]], dtype=dtype
+    )
+    original = hidden.clone()
+    discard = torch.tensor([True, True, False, False])
+    output = mask_values(hidden, discard, True)
+    assert output.dtype == dtype and torch.isfinite(output).all()
+    assert torch.count_nonzero(output[:, :2]) == 0
+    torch.testing.assert_close(
+        output[0].float().square().sum(),
+        hidden[0].float().square().sum(),
+        rtol=0.01 if dtype == torch.bfloat16 else 1e-6,
+        atol=1e-6,
+    )
+    assert torch.count_nonzero(output[1:]) == 0
+    assert torch.equal(hidden, original)
+
+
+@pytest.mark.parametrize("rescale", [False, True])
+@pytest.mark.parametrize("keywords", [False, True])
+def test_norm_mask_preserved_routing_receives_full_current_layer_output(
+    rescale, keywords
+):
+    import hashlib
+    from types import SimpleNamespace
+
+    from post_norm_channels import apply
+
+    class Experts(torch.nn.Module):
+        gate = None
+
+        def forward(self, hidden_states, router_logits):
+            self.received_logits = router_logits.clone()
+            self.received_hidden = hidden_states.clone()
+            return hidden_states
+
+    class MoE(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.gate = torch.nn.Linear(4, 2, bias=False)
+            with torch.no_grad():
+                self.gate.weight.copy_(
+                    torch.tensor([[10.0, 10.0, 0.0, 0.0], [0.0, 0.0, 1.0, 1.0]])
+                )
+            self.experts = Experts()
+
+        def forward(self, hidden):
+            logits = self.gate(hidden)
+            if keywords:
+                return self.experts(hidden_states=hidden, router_logits=logits)
+            return self.experts(hidden, logits)
+
+    class Norm(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor([1.0, 2.0, 3.0, 4.0]))
+
+        def forward(self, hidden):
+            return hidden * self.weight
+
+    norms = [Norm() for _ in range(3)]
+    blocks = [SimpleNamespace(post_attention_layernorm=n, mlp=MoE()) for n in norms]
+    model = SimpleNamespace(
+        model=SimpleNamespace(layers=blocks), config=SimpleNamespace(hidden_size=4)
+    )
+    cfg = dict(
+        first_layer=1,
+        last_layer=2,
+        threshold=1.0,
+        expected_kept=2,
+        mask_sha256=hashlib.sha256(bytes([0, 0, 1, 1])).hexdigest(),
+        preserve_routing=True,
+        rescale_rms=rescale,
+    )
+    report = apply(model, cfg)
+    assert report["preserve_routing"] and report["rescale_rms"] == rescale
+    hidden = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    original = hidden.clone()
+    for block in blocks[1:]:
+        normalized = block.post_attention_layernorm(torch.ones_like(hidden))
+        assert torch.equal(normalized, hidden)
+        output = block.mlp(normalized)
+        assert torch.equal(
+            block.mlp.experts.received_logits, torch.tensor([[30.0, 7.0]])
+        )
+        assert torch.count_nonzero(output[:, :2]) == 0
+        if rescale:
+            torch.testing.assert_close(output.square().sum(), hidden.square().sum())
+        else:
+            assert torch.equal(output, torch.tensor([[0.0, 0.0, 3.0, 4.0]]))
+        assert not block.post_attention_layernorm._forward_hooks
+    assert torch.equal(hidden, original)
+    assert torch.equal(blocks[0].mlp(hidden), original)
+    with pytest.raises(ValueError, match="boolean"):
+        apply(model, dict(cfg, rescale_rms="false"))
+
+
 def test_normkeep_registry_pairs_protocols_and_checks_served_mask(monkeypatch):
     rows = [
         c for c in run.experiment_configs if c["name"].startswith("normkeep_preview_")
     ]
-    assert len(rows) == 10
+    assert len(rows) == 16
     for task in ("mmlu", "gsm8k"):
         baseline = next(
             c for c in rows if c["name"] == f"normkeep_preview_{task}_baseline"
@@ -706,6 +807,34 @@ def test_normkeep_registry_pairs_protocols_and_checks_served_mask(monkeypatch):
             actual = dict(site="mlp", epsilon=0.0, quantile=0.0)
             assert run.config_mismatch(actual)
             assert not run.config_mismatch(dict(actual, post_norm_channels=mask))
+        base = next(c for c in rows if c["name"] == f"normkeep_preview_{task}_keep1980")
+        for suffix, rescale, preserve in [
+            ("rms", True, False),
+            ("router", False, True),
+            ("rms_router", True, True),
+        ]:
+            row = next(c for c in rows if c["name"] == base["name"] + "_" + suffix)
+            assert {
+                k: v for k, v in row.items() if k not in ("name", "post_norm_channels")
+            } == {
+                k: v for k, v in base.items() if k not in ("name", "post_norm_channels")
+            }
+            assert row["post_norm_channels"] == dict(
+                base["post_norm_channels"],
+                rescale_rms=rescale,
+                preserve_routing=preserve,
+            )
+            monkeypatch.setattr(run, "CONFIG", dict(row))
+            actual = dict(
+                site="mlp",
+                epsilon=0.0,
+                quantile=0.0,
+                post_norm_channels=row["post_norm_channels"],
+            )
+            assert not run.config_mismatch(actual)
+            assert run.config_mismatch(
+                dict(actual, post_norm_channels=base["post_norm_channels"])
+            )
 
 
 def test_full_run_summary_skips_preview_question_sets(tmp_path, monkeypatch):

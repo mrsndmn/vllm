@@ -11,10 +11,14 @@ import torch
 
 def validate_config(config):
     keys = {"first_layer", "last_layer", "threshold", "expected_kept", "mask_sha256"}
-    if set(config) != keys:
+    optional = {"rescale_rms", "preserve_routing"}
+    if not keys <= set(config) or set(config) - keys - optional:
         raise ValueError(
             "Norm channel mask requires layer range, threshold and mask pin"
         )
+    for key in optional:
+        if key in config and type(config[key]) is not bool:
+            raise ValueError(f"{key} must be boolean")
     for key in ("first_layer", "last_layer", "expected_kept"):
         if isinstance(config[key], bool) or not isinstance(config[key], int):
             raise ValueError(f"{key} must be an integer")
@@ -59,8 +63,21 @@ def keep_mask(weights, config):
     return keep
 
 
+def mask_values(hidden, discard, rescale_rms=False):
+    """Mask a copy and optionally preserve each token's original weighted RMS."""
+    masked = hidden.masked_fill(discard, 0)
+    if not rescale_rms:
+        return masked
+    before = hidden.float().square().sum(dim=-1, keepdim=True)
+    after = masked.float().square().sum(dim=-1, keepdim=True)
+    denominator = torch.where(after > 0, after, torch.ones_like(after))
+    scale = (before / denominator).sqrt()
+    scale = torch.where(after > 0, scale, torch.ones_like(scale))
+    return (masked.float() * scale).to(hidden.dtype)
+
+
 def apply(model, config):
-    """Mask normalized hidden states before MoE routing; preserve residual tensors."""
+    """Mask normalized outputs or expert inputs while preserving residuals."""
     validate_config(config)
     layers = model.model.layers
     first, last = config["first_layer"], config["last_layer"]
@@ -71,19 +88,49 @@ def apply(model, config):
     if weights.shape[1] != model.config.hidden_size:
         raise ValueError("Unexpected normalization hidden width")
     keep = keep_mask(weights, config)
-    for norm in norms:
+    rescale = config.get("rescale_rms", False)
+    preserve = config.get("preserve_routing", False)
+    if preserve:
+        experts = [layers[i].mlp.experts for i in range(first, last + 1)]
+        if any(getattr(module, "gate", None) is not None for module in experts):
+            raise ValueError("Preserved routing requires externally computed logits")
+    for i, norm in enumerate(norms):
         discard = (~keep).to(norm.weight.device)
 
-        def mask_output(module, inputs, output, *, discard=discard):
-            if isinstance(output, tuple):
-                hidden, residual = output
-                return hidden.masked_fill(discard, 0), residual
-            return output.masked_fill(discard, 0)
+        if preserve:
 
-        norm.register_forward_hook(mask_output)
+            def mask_expert_input(module, args, kwargs, *, discard=discard):
+                if "hidden_states" in kwargs:
+                    kwargs = dict(kwargs)
+                    kwargs["hidden_states"] = mask_values(
+                        kwargs["hidden_states"], discard, rescale
+                    )
+                    return args, kwargs
+                if not args:
+                    raise ValueError("Missing expert hidden_states input")
+                return (mask_values(args[0], discard, rescale), *args[1:]), kwargs
+
+            experts[i].register_forward_pre_hook(mask_expert_input, with_kwargs=True)
+        else:
+
+            def mask_output(module, inputs, output, *, discard=discard):
+                if isinstance(output, tuple):
+                    hidden, residual = output
+                    return mask_values(hidden, discard, rescale), residual
+                return mask_values(output, discard, rescale)
+
+            norm.register_forward_hook(mask_output)
     return {
         "config": config,
-        "site": "post_attention_layernorm output before MoE router and experts",
+        "site": "expert input after external routing"
+        if preserve
+        else "post_attention_layernorm output before MoE router and experts",
+        "rescale_rms": rescale,
+        "preserve_routing": preserve,
+        "routing_reference": "unmasked current-layer norm output"
+        if preserve
+        else "masked norm output",
+        "zero_energy_policy": "leave zero vector unchanged",
         "layers": list(range(first, last + 1)),
         "hidden_size": len(keep),
         "kept_channels": keep.nonzero().flatten().tolist(),

@@ -38,6 +38,11 @@ prompts and non-intervention settings were validated against the original
 baselines. Follow-up comparison artifacts, including the original arms, are saved
 under `run/normkeep-expanded/results.json` and `run/normkeep-expanded/results.csv`.
 
+Correction comparisons test preserving each token's original weighted norm-output
+energy and computing routing on the full current-layer norm output before masking
+expert inputs. The combined arm applies both corrections. These evaluations reuse
+the original question sets and baselines; correction results are pending.
+
 ## Conclusions
 
 The initial mask and two stronger follow-up masks destroy useful generation on
@@ -63,3 +68,5 @@ intervention before considering a larger evaluation.
 - 2026-10-14: Validated all completed follow-ups against the original baselines;
   recorded substantial accuracy loss in the mildest mask and generation collapse
   in the other follow-up masks.
+- 2026-10-14: Added weighted-RMS restoration, external-routing preservation and
+  combined correction arms, using the same mask and preview evaluation protocols.
