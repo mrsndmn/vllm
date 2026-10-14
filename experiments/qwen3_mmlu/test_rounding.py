@@ -588,6 +588,30 @@ def test_threshold_counts_new_zeros_and_affected_tokens():
     assert counts.tolist() == [[4, 2, 1, 1, 1, 0], [4, 0, 2, 1, 0, 0]]
 
 
+def test_norm_layer_similarity_separates_scale_sign_and_coordinate_order():
+    from norm_weight_analysis import layer_similarity
+
+    weights = np.array(
+        [
+            [1.0, 2.0, 2.0, 4.0],
+            [10.0, 20.0, 20.0, 40.0],
+            [-1.0, -2.0, -2.0, -4.0],
+            [4.0, 2.0, 2.0, 1.0],
+        ]
+    )
+    cosine, spearman = layer_similarity(weights)
+    assert cosine[0, 1] == pytest.approx(1)
+    assert cosine[0, 2] == pytest.approx(-1)
+    assert spearman[0, 1] == spearman[0, 2] == pytest.approx(1)
+    assert spearman[0, 3] == pytest.approx(-1)
+    relative = weights / np.sqrt(np.mean(weights**2, axis=1, keepdims=True))
+    assert np.mean((relative[0] - relative[3]) ** 2) == pytest.approx(
+        2 - 2 * cosine[0, 3]
+    )
+    _, constant = layer_similarity(np.ones((2, 4)))
+    assert np.isnan(constant).all()
+
+
 def test_zero_epsilon_is_bitwise_noop_and_nonfinite_values_are_retained():
     values = torch.tensor([[0.0, -0.0, 1e-5, float("nan"), float("inf")]])
     original = values.view(torch.int32).clone()

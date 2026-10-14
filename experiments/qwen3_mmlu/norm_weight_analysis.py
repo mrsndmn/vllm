@@ -51,8 +51,20 @@ def load_norms(report):
     return data["config"]["model"], norms
 
 
+def layer_similarity(weights):
+    """Return scale-free signed cosine and magnitude-rank correlation matrices."""
+    unit = weights / np.linalg.norm(weights, axis=1, keepdims=True)
+    ranks = rankdata(np.abs(weights), axis=1)
+    ranks -= ranks.mean(axis=1, keepdims=True)
+    lengths = np.linalg.norm(ranks, axis=1, keepdims=True)
+    ranks = np.divide(
+        ranks, lengths, out=np.full_like(ranks, np.nan), where=lengths > 0
+    )
+    return np.clip(unit @ unit.T, -1, 1), np.clip(ranks @ ranks.T, -1, 1)
+
+
 def plot(config):
-    """Write four figures and exact, unclipped summary statistics."""
+    """Write six figures and exact, unclipped summary statistics."""
     model, norms = load_norms(config["report"])
     output = Path(config["output"])
     output.mkdir(parents=True, exist_ok=True)
@@ -228,6 +240,69 @@ def plot(config):
         "Squared-weight share describes parameters, not activation or output energy"
     )
     save(fig, "04-layer-scale-concentration")
+
+    fig, axes = plt.subplots(
+        count, 3, figsize=(16, 3.6 * count), squeeze=False, constrained_layout=True
+    )
+    matrices = {}
+    for row, (family, (layers, weights, rms, relative)) in enumerate(norms.items()):
+        cosine, spearman = layer_similarity(weights)
+        matrices[family] = (layers, spearman)
+        adjacent = np.diff(layers) == 1
+        x = layers[1:][adjacent]
+        cos = np.diag(cosine, k=1)[adjacent]
+        rho = np.diag(spearman, k=1)[adjacent]
+        difference = np.sqrt(np.mean(np.diff(relative, axis=0) ** 2, axis=1))[adjacent]
+        ratio = (rms[1:] / rms[:-1])[adjacent]
+        ax = axes[row, 0]
+        ax.plot(x, cos, label="Signed cosine", color="#225588")
+        ax.plot(x, rho, label="Spearman of |weights|", color="#cc7722")
+        ax.set(title=family, ylabel="Similarity (1 = identical profile)")
+        ax.legend()
+        ax = axes[row, 1]
+        ax.plot(x, difference, color="#994477")
+        ax.set(title=family, ylabel="RMS difference of weight / row RMS")
+        ax = axes[row, 2]
+        ax.plot(x, ratio, color="#228866")
+        ax.axhline(1, color="#777777", linestyle="--")
+        ax.set(title=family, ylabel="RMS(layer l) / RMS(layer l−1)", yscale="log")
+        for ax in axes[row]:
+            ax.set_xlabel("Layer l: comparison of l−1 with l")
+            ax.grid(alpha=0.15)
+        summary["families"][family]["adjacent_pairs"] = [
+            {
+                "layers": [int(layer - 1), int(layer)],
+                "cosine": float(c),
+                "magnitude_spearman": float(s) if np.isfinite(s) else None,
+                "relative_rmse": float(d),
+                "rms_ratio": float(r),
+            }
+            for layer, c, s, d, r in zip(x, cos, rho, difference, ratio)
+        ]
+    fig.suptitle(
+        f"{model}\nNeighboring layer norm weights: profile vs overall scale\n"
+        "Relative RMS difference = √(2−2·cosine); Spearman compares coordinate ordering"
+    )
+    save(fig, "05-adjacent-layer-similarity")
+
+    fig, axes = plt.subplots(
+        1, count, figsize=(7 * count, 6), squeeze=False, constrained_layout=True
+    )
+    for ax, (family, (layers, matrix)) in zip(axes[0], matrices.items()):
+        image = ax.imshow(
+            matrix, vmin=-1, vmax=1, cmap="RdBu_r", interpolation="nearest"
+        )
+        ticks = np.arange(0, len(layers), max(1, len(layers) // 12))
+        ax.set_xticks(ticks, layers[ticks])
+        ax.set_yticks(ticks, layers[ticks])
+        ax.set(title=family, xlabel="Decoder layer", ylabel="Decoder layer")
+        fig.colorbar(image, ax=ax, label="Spearman correlation of |weights|")
+    fig.suptitle(
+        f"{model}\nCoordinate-order similarity across every layer pair\n"
+        "Cells next to the diagonal compare neighbors; "
+        "constant-magnitude rows are undefined"
+    )
+    save(fig, "06-layer-rank-similarity")
     (output / "summary.json").write_text(json.dumps(summary, indent=2))
     print(json.dumps(summary, indent=2))
 

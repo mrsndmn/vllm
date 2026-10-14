@@ -171,8 +171,9 @@ with `/home/jovyan/.mlspace/envs/vllm_cu126/bin/python` from the repository root
   row and listed in report provenance; projection and norm biases remain included.
 - `experiments/qwen3_mmlu/norm_weight_analysis.py [--name qwen3_norm_weights]`:
   CPU-only analysis of embedded decoder norm scales in a weight report. Writes
-  four static PNGs (relative heatmaps, coordinate profiles, persistence, layer
-  scale/concentration) and `summary.json` to its configured artifact directory.
+  six static PNGs (relative heatmaps, coordinate profiles, persistence, layer
+  scale/concentration, adjacent similarity and all-layer rank correlation) and
+  `summary.json` to its configured artifact directory.
 - `rounding_worker.py`: GPU load, warmup, chunked prefill, decode, continuous
   batching, and finished-request cleanup; only installed vLLM 0.14.1, eager,
   unquantized Qwen3 MoE on one GPU with its Triton expert implementation.
