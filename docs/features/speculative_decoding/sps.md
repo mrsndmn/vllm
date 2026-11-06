@@ -44,6 +44,9 @@ must be smaller than the number of trained prediction embeddings. Omit
 `speculative_config` to benchmark ordinary first-slot SPS with the same weights.
 The pilot supports unquantized FP16/BF16 weights and KV, one request, one GPU,
 eager execution and the V1 GPU model runner. Other configurations fail closed.
+`max_model_len` must leave room for all active prediction slots within the
+checkpoint's native rotary capacity (one slot even in the ordinary SPS baseline).
+LoRA adapters and speculative proposers other than `SPSProposer` are rejected.
 Production batching, CUDA graph capture, quantization and distributed execution
 are outside this pilot. No speedup or unchanged parent-model quality is claimed.
 

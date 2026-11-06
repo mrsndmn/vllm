@@ -7,7 +7,15 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from vllm.v1.attention.ops.sps_prediction import validate_sps_context
 from vllm.v1.spec_decode.sps_proposer import SPSProposer
+
+
+@pytest.mark.parametrize("horizons", [1, 4])
+def test_prediction_positions_reserve_rotary_context(horizons):
+    validate_sps_context(128 - horizons, horizons, 128)
+    with pytest.raises(ValueError, match="RoPE"):
+        validate_sps_context(129 - horizons, horizons, 128)
 
 
 @pytest.mark.parametrize("accepted", [0, 1, 3])

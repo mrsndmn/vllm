@@ -7,6 +7,16 @@ import torch
 from vllm.triton_utils import tl, triton
 
 
+def validate_sps_context(max_model_len, horizons, rotary_capacity):
+    """Reserve rotary rows for every active prediction slot, including P1."""
+    if horizons < 1 or max_model_len < 1:
+        raise ValueError("SPS context and horizon counts must be positive")
+    if max_model_len + horizons > rotary_capacity:
+        raise ValueError(
+            "SPS max_model_len must reserve prediction-horizon RoPE positions"
+        )
+
+
 @triton.jit
 def _prediction_attention(
     Q,

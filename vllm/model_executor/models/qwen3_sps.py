@@ -7,7 +7,10 @@ from torch import nn
 
 from vllm.forward_context import get_forward_context
 from vllm.v1.attention.backends.triton_attn import TritonAttentionMetadata
-from vllm.v1.attention.ops.sps_prediction import sps_prediction_attention
+from vllm.v1.attention.ops.sps_prediction import (
+    sps_prediction_attention,
+    validate_sps_context,
+)
 
 from .qwen3 import Qwen3ForCausalLM
 
@@ -38,12 +41,25 @@ class Qwen3SPSForCausalLM(Qwen3ForCausalLM):
             raise ValueError("SPS pilot requires VLLM_USE_V2_MODEL_RUNNER=0")
         if vllm_config.quant_config is not None:
             raise ValueError("SPS pilot does not support quantized weights")
+        if vllm_config.lora_config is not None:
+            raise ValueError("SPS pilot does not support LoRA token mappings")
+        spec = vllm_config.speculative_config
+        if spec is not None and (
+            spec.method != "custom_class"
+            or spec.model != "vllm.v1.spec_decode.sps_proposer.SPSProposer"
+        ):
+            raise ValueError("SPS pilot requires the shared-backbone SPSProposer")
         super().__init__(vllm_config=vllm_config, prefix=prefix)
         self.sps_prediction_embeddings = nn.Parameter(
             torch.empty(self.config.sps_horizons, self.config.hidden_size)
         )
         self.sps_horizons = (
             self.config.sps_horizons if vllm_config.speculative_config else 1
+        )
+        validate_sps_context(
+            vllm_config.model_config.max_model_len,
+            self.sps_horizons,
+            self.config.max_position_embeddings,
         )
         self.sps_hidden = None
         self.sps_positions = None
