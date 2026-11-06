@@ -1,5 +1,10 @@
 # Agent Instructions for vLLM
 
+## Usage arms
+
+- `LLM` with `Qwen3SPSForCausalLM` → `qwen3_sps` and `sps_prediction` modules.
+- `LLM` with custom `SPSProposer` → V1 GPU model runner and rejection sampler; `test_sps_proposer`.
+
 > These instructions apply to **all** AI-assisted contributions to `vllm-project/vllm`.
 > Breaching these guidelines can result in automatic banning.
 
