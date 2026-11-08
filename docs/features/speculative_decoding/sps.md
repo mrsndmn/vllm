@@ -43,11 +43,18 @@ Set `VLLM_USE_V2_MODEL_RUNNER=0` before starting the process. The draft length
 must be smaller than the number of trained prediction embeddings. Omit
 `speculative_config` to benchmark ordinary first-slot SPS with the same weights.
 The pilot supports unquantized FP16/BF16 weights and KV, one request, one GPU,
-eager execution and the V1 GPU model runner. Other configurations fail closed.
+eager execution or full decode CUDA graphs and the V1 GPU model runner.
+For decode graphs, set `enforce_eager=False` and
+`compilation_config={"mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY",
+"cudagraph_capture_sizes": [1, 2, 3, 4]}`. This captures the target decode
+forward without Torch compilation; prefill remains outside the graph. The
+proposer reads persistent GPU buffers updated by every graph replay. Draft
+selection and rejection sampling remain outside the target graph.
+Other configurations fail closed.
 `max_model_len` must leave room for all active prediction slots within the
 checkpoint's native rotary capacity (one slot even in the ordinary SPS baseline).
 LoRA adapters and speculative proposers other than `SPSProposer` are rejected.
-Production batching, CUDA graph capture, quantization and distributed execution
+Production batching, prefill CUDA graphs, quantization and distributed execution
 are outside this pilot. No speedup or unchanged parent-model quality is claimed.
 
 The SPS experiment repository owns training/export and MMLU benchmarking. Pin

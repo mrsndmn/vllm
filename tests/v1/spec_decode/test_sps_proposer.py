@@ -44,3 +44,17 @@ def test_chunked_prefill_without_a_sample_emits_no_proposals():
         scheduler_config=SimpleNamespace(max_num_seqs=1),
     )
     assert SPSProposer(config).propose([[]], [10], None) == [[]]
+
+
+def test_replayed_buffer_rejects_a_stale_position():
+    config = SimpleNamespace(
+        speculative_config=SimpleNamespace(num_speculative_tokens=3),
+        scheduler_config=SimpleNamespace(max_num_seqs=1),
+    )
+    proposer = SPSProposer(config)
+    proposer.model = SimpleNamespace(
+        sps_hidden=torch.zeros(8, 4, 17),
+        sps_positions=torch.tensor([10, 11, 12, 13, 99, 99, 99, 99]),
+    )
+    with pytest.raises(RuntimeError, match="outside the latest SPS block"):
+        proposer.propose([[7]], [16], None)

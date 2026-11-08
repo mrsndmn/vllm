@@ -5,6 +5,7 @@
 import torch
 from torch import nn
 
+from vllm.config import CompilationMode, CUDAGraphMode
 from vllm.forward_context import get_forward_context
 from vllm.v1.attention.backends.triton_attn import TritonAttentionMetadata
 from vllm.v1.attention.ops.sps_prediction import (
@@ -26,8 +27,14 @@ class Qwen3SPSForCausalLM(Qwen3ForCausalLM):
             or scheduler.max_num_seqs != 1
         ):
             raise ValueError("SPS pilot requires TP=PP=DP=1 and max_num_seqs=1")
-        if not vllm_config.model_config.enforce_eager:
-            raise ValueError("SPS pilot requires enforce_eager=True")
+        compilation = vllm_config.compilation_config
+        if not vllm_config.model_config.enforce_eager and (
+            compilation.mode != CompilationMode.NONE
+            or compilation.cudagraph_mode != CUDAGraphMode.FULL_DECODE_ONLY
+        ):
+            raise ValueError(
+                "SPS graphs require compilation mode NONE and FULL_DECODE_ONLY"
+            )
         if (
             scheduler.enable_chunked_prefill
             or scheduler.async_scheduling
@@ -61,9 +68,24 @@ class Qwen3SPSForCausalLM(Qwen3ForCausalLM):
             self.sps_horizons,
             self.config.max_position_embeddings,
         )
-        self.sps_hidden = None
-        self.sps_positions = None
-        self.sps_forward_count = 0
+        capacity = scheduler.max_num_batched_tokens
+        self.register_buffer(
+            "sps_hidden",
+            self.sps_prediction_embeddings.new_empty(
+                capacity, self.sps_horizons, self.config.hidden_size
+            ),
+            persistent=False,
+        )
+        self.register_buffer(
+            "sps_positions",
+            torch.full(
+                (capacity,),
+                -1,
+                dtype=torch.long,
+                device=self.sps_prediction_embeddings.device,
+            ),
+            persistent=False,
+        )
         for layer in self.model.layers:
             attention = layer.self_attn.attn
             if type(attention.impl).__name__ != "TritonAttentionImpl":
@@ -144,7 +166,8 @@ class Qwen3SPSForCausalLM(Qwen3ForCausalLM):
             x = layer.mlp(x)
         x, _ = self.model.norm(x, residual)
         prediction_hidden = x.reshape(tokens, width, -1)[:, 1:]
-        self.sps_hidden = prediction_hidden
-        self.sps_positions = positions.clone()
-        self.sps_forward_count += 1
+        # Every captured shape writes the same buffers. Python assignments are
+        # not replayed and could otherwise expose states from another graph.
+        self.sps_hidden[:tokens].copy_(prediction_hidden)
+        self.sps_positions[:tokens].copy_(positions)
         return prediction_hidden[:, 0].contiguous()

@@ -39,7 +39,10 @@ class SPSProposer:
         # not yet been encoded. Reuse the group immediately before that token.
         absolute = int(num_tokens_no_spec[0]) - 2
         row = absolute - int(model.sps_positions[0].item())
-        if not 0 <= row < model.sps_hidden.shape[0]:
+        if (
+            not 0 <= row < model.sps_hidden.shape[0]
+            or int(model.sps_positions[row].item()) != absolute
+        ):
             raise RuntimeError("Accepted prefix is outside the latest SPS block")
         hidden = model.sps_hidden[row, 1 : self.num_spec_tokens + 1]
         logits = model.compute_logits(hidden)
